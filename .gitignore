@@ -18,3 +18,10 @@ Thumbs.db
 
 *DB_ERROR codes*
 *•*
+
+.idea/
+.pytest_cache/
+__pycache__/
+*.pyc
+.env
+.venv/
