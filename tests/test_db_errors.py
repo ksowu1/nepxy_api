@@ -3,6 +3,7 @@
 # tests/test_db_errors.py
 from fastapi import HTTPException
 
+import db_exec
 import routes.wallet as wallet_routes
 
 
@@ -19,8 +20,7 @@ def test_unknown_db_error_returns_500(client, user2, wallet2_xof, monkeypatch):
     def fake_raise_for_db_error(exc: Exception) -> None:
         raise HTTPException(status_code=500, detail="Internal server error")
 
-    monkeypatch.setattr(wallet_routes, "raise_for_db_error", fake_raise_for_db_error, raising=True)
-
+    monkeypatch.setattr(db_exec, "raise_http_from_db_error", fake_raise_for_db_error, raising=True)
     # Now patch the route module's get_conn to raise an unknown exception
     class DummyConn:
         def __enter__(self):  # pragma: no cover
