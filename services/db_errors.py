@@ -20,7 +20,6 @@ DB_ERROR_HTTP_MAP: dict[str, tuple[int, str]] = {
     "POOL_NOT_CONFIGURED": (500, "FX pool not configured"),
     "INSUFFICIENT_FUNDS": (409, "Insufficient funds"),
     "FX_CONVERT_FAILED": (500, "FX convert failed"),
-    "P2P_FAILED": (500, "P2P failed"),
     "CASHIN_FAILED": (500, "Cash-in failed"),
 
 }
