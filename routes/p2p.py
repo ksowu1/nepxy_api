@@ -3,15 +3,17 @@
 # routes/p2p.py
 from fastapi import APIRouter, Depends, HTTPException, Header
 from uuid import UUID
-from services.db_errors import raise_http_from_db_error
+
 from deps.auth import get_current_user, CurrentUser
 from db import get_conn
 from db_session import set_db_actor
 from schemas import P2PTransferRequest
+from services.db_errors import raise_http_from_db_error
 
 router = APIRouter(prefix="/v1", tags=["p2p"])
 
 SYSTEM_USER_ID = UUID("14b365c5-413b-43da-9d5f-86be7fd95fe3")  # system@nexapay.local
+
 
 @router.post("/p2p/transfer")
 def p2p_transfer(
@@ -19,6 +21,7 @@ def p2p_transfer(
     user: CurrentUser = Depends(get_current_user),
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ):
+    # Idempotency is mandatory
     if not idempotency_key or not idempotency_key.strip():
         raise HTTPException(status_code=409, detail="IDEMPOTENCY_CONFLICT")
 
@@ -34,7 +37,7 @@ def p2p_transfer(
                 )
                 row = cur.fetchone()
                 if not row:
-                    raise HTTPException(status_code=404, detail="WALLET_NOT_FOUND")
+                    raise HTTPException(status_code=404, detail="Wallet not found")
                 country = row[0]
 
                 cur.execute(
@@ -65,6 +68,12 @@ def p2p_transfer(
 
         return {"transaction_id": tx_id}
 
-    except Exception as e:
-        raise_http_from_db_error(e)
+    except HTTPException:
+        # already clean
         raise
+    except Exception as e:
+        # ✅ Convert DB_ERROR codes into 403/404/409/etc
+        raise_http_from_db_error(e)
+
+        # If mapping didn't raise, fail closed (no "P2P failed" masking)
+        raise HTTPException(status_code=500, detail="Internal server error")
