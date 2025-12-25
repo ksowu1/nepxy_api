@@ -22,8 +22,9 @@ class AuthedUser:
 
 @pytest.fixture(scope="session")
 def client() -> TestClient:
-    # In-process integration tests against FastAPI app (still uses your real DB).
-    return TestClient(app)
+    # Return responses instead of re-raising server exceptions (needed for 500 tests)
+    return TestClient(app, raise_server_exceptions=False)
+
 
 
 def _login(client: TestClient, email: str, password: str) -> AuthedUser:
