@@ -21,3 +21,5 @@ JOIN ledger.ledger_accounts a
   ON a.id = e.account_id
 WHERE e.transaction_id = :tx_id::uuid
 ORDER BY e.created_at ASC, e.dc ASC, e.amount_cents DESC;
+
+
