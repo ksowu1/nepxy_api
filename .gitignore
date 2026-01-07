@@ -47,3 +47,7 @@ valid_webhook_events.csv
 
 # Mobile build artifacts / local projects
 mobile/nepxy/
+
+# Local env script
+scripts/env.ps1
+
