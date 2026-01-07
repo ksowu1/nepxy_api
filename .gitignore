@@ -24,3 +24,6 @@ valid_webhook_events.csv
 _check_*.py
 _peek_*.py
 debug_*.py
+
+.idea/
+
