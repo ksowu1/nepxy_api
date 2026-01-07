@@ -66,7 +66,8 @@ function Invoke-Nepxy {
 function Get-NepxyToken {
   param(
     [string]$Email = "admin@nexapay.io",
-    [string]$Password = "<REDACTED>",
+    [Parameter(Mandatory=$true)]
+    [string]$Password,
     [string]$BaseUrl = $script:NEPXY_BASE
   )
   $old = $script:NEPXY_BASE
@@ -252,7 +253,7 @@ function Get-PayoutWorkerMetricsPretty {
 # Quickstart (copy/paste)
 # ============================
 # Set-NepxyBaseUrl "http://127.0.0.1:8001"
-# $TOKEN = Get-NepxyToken -Email "admin@nexapay.io" -Password "<REDACTED>"
+# $TOKEN = Get-NepxyToken -Email "admin@nexapay.io" -Password "<YOUR_PASSWORD>"
 # $wallets = Get-MyWallets
 # $WALLET_ID = $wallets[0].wallet_id
 # Get-WalletBalance -WalletId $WALLET_ID
