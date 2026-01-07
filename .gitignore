@@ -51,3 +51,9 @@ mobile/nepxy/
 # Local env script
 scripts/env.ps1
 
+
+# Weird accidental files from terminal pastes
+*PGHOST*
+*\357\200\272*
+*\357\200\276*
+
