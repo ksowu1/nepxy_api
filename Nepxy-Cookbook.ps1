@@ -1,7 +1,8 @@
+﻿
 
 
 # ============================
-# NexaPay PowerShell Cookbook
+# Nepxy PowerShell Cookbook
 # login, wallets, activity, cash-in, cash-out, payout status, webhooks, admin ops, worker metrics
 # ============================
 
@@ -9,24 +10,29 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 # ---- 0) Config ----
-$script:NEXA_BASE = $env:NEXA_BASE ?? "http://127.0.0.1:8001"
-$script:NEXA_TOKEN = $null
+# NOTE: keep this PowerShell 5.1 compatible (no ?? operator)
+if ($env:NEPXY_BASE -and ($env:NEPXY_BASE.Trim() -ne "")) {
+  $script:NEPXY_BASE = $env:NEPXY_BASE.Trim().TrimEnd("/")
+} else {
+  $script:NEPXY_BASE = "http://127.0.0.1:8001"
+}
+$script:NEPXY_TOKEN = $null
 
-function Set-NexaPayBaseUrl {
+function Set-NepxyBaseUrl {
   param([Parameter(Mandatory=$true)][string]$BaseUrl)
-  $script:NEXA_BASE = $BaseUrl.TrimEnd("/")
-  $script:NEXA_BASE
+  $script:NEPXY_BASE = $BaseUrl.TrimEnd("/")
+  $script:NEPXY_BASE
 }
 
-function Set-NexaPayToken {
+function Set-NepxyToken {
   param([Parameter(Mandatory=$true)][string]$Token)
-  $script:NEXA_TOKEN = $Token
-  $script:NEXA_TOKEN
+  $script:NEPXY_TOKEN = $Token
+  $script:NEPXY_TOKEN
 }
 
 function New-IdempotencyKey { [guid]::NewGuid().ToString() }
 
-function Invoke-NexaPay {
+function Invoke-Nepxy {
   <#
     Wrapper around Invoke-RestMethod:
       - Adds Authorization header (if token set)
@@ -37,12 +43,12 @@ function Invoke-NexaPay {
     [Parameter(Mandatory=$true)][ValidateSet("GET","POST","PUT","PATCH","DELETE")][string]$Method,
     [Parameter(Mandatory=$true)][string]$Path,
     [object]$JsonBody = $null,
-    [string]$Token = $script:NEXA_TOKEN,
+    [string]$Token = $script:NEPXY_TOKEN,
     [string]$IdempotencyKey = $null,
     [hashtable]$ExtraHeaders = @{}
   )
 
-  $uri = "$($script:NEXA_BASE)$Path"
+  $uri = "$($script:NEPXY_BASE)$Path"
   $headers = @{}
   if ($Token) { $headers["Authorization"] = "Bearer $Token" }
   if ($IdempotencyKey) { $headers["Idempotency-Key"] = $IdempotencyKey }
@@ -57,44 +63,44 @@ function Invoke-NexaPay {
 }
 
 # ---- 1) Login (get access token) ----
-function Get-NexaPayToken {
+function Get-NepxyToken {
   param(
     [string]$Email = "admin@nexapay.io",
     [string]$Password = "<REDACTED>",
-    [string]$BaseUrl = $script:NEXA_BASE
+    [string]$BaseUrl = $script:NEPXY_BASE
   )
-  $old = $script:NEXA_BASE
-  $script:NEXA_BASE = $BaseUrl.TrimEnd("/")
+  $old = $script:NEPXY_BASE
+  $script:NEPXY_BASE = $BaseUrl.TrimEnd("/")
   try {
-    $resp = Invoke-NexaPay -Method POST -Path "/v1/auth/login" -JsonBody @{ email=$Email; password=$Password } -Token $null
-    Set-NexaPayToken -Token $resp.access_token | Out-Null
+    $resp = Invoke-Nepxy -Method POST -Path "/v1/auth/login" -JsonBody @{ email=$Email; password=$Password } -Token $null
+    Set-NepxyToken -Token $resp.access_token | Out-Null
     return $resp.access_token
   } finally {
-    $script:NEXA_BASE = $old
+    $script:NEPXY_BASE = $old
   }
 }
 
 # ---- 2) Wallets ----
 function Get-MyWallets {
-  param([string]$Token = $script:NEXA_TOKEN)
-  (Invoke-NexaPay -Method GET -Path "/v1/wallets" -Token $Token).wallets
+  param([string]$Token = $script:NEPXY_TOKEN)
+  (Invoke-Nepxy -Method GET -Path "/v1/wallets" -Token $Token).wallets
 }
 
 function Get-WalletBalance {
   param(
     [Parameter(Mandatory=$true)][string]$WalletId,
-    [string]$Token = $script:NEXA_TOKEN
+    [string]$Token = $script:NEPXY_TOKEN
   )
-  Invoke-NexaPay -Method GET -Path "/v1/wallets/$WalletId/balance" -Token $Token
+  Invoke-Nepxy -Method GET -Path "/v1/wallets/$WalletId/balance" -Token $Token
 }
 
 function Get-WalletActivity {
   param(
     [Parameter(Mandatory=$true)][string]$WalletId,
     [int]$Limit = 20,
-    [string]$Token = $script:NEXA_TOKEN
+    [string]$Token = $script:NEPXY_TOKEN
   )
-  Invoke-NexaPay -Method GET -Path "/v1/wallets/$WalletId/activity?limit=$Limit" -Token $Token
+  Invoke-Nepxy -Method GET -Path "/v1/wallets/$WalletId/activity?limit=$Limit" -Token $Token
 }
 
 # ---- 3) P2P transfer (wallet-to-wallet) ----
@@ -104,10 +110,10 @@ function New-P2PTransfer {
     [Parameter(Mandatory=$true)][string]$ToWalletId,
     [Parameter(Mandatory=$true)][int]$AmountCents,
     [string]$Memo = "p2p",
-    [string]$Token = $script:NEXA_TOKEN
+    [string]$Token = $script:NEPXY_TOKEN
   )
   $idem = New-IdempotencyKey
-  Invoke-NexaPay -Method POST -Path "/v1/payments/p2p" -Token $Token -IdempotencyKey $idem -JsonBody @{
+  Invoke-Nepxy -Method POST -Path "/v1/payments/p2p" -Token $Token -IdempotencyKey $idem -JsonBody @{
     from_wallet_id=$FromWalletId
     to_wallet_id=$ToWalletId
     amount_cents=$AmountCents
@@ -124,12 +130,12 @@ function New-CashInMobileMoney {
     [ValidateSet("TMONEY","FLOOZ","MOMO")][string]$Provider = "TMONEY",
     [string]$PhoneE164 = "+22890009911",
     [string]$ProviderRef = $null,
-    [string]$Token = $script:NEXA_TOKEN
+    [string]$Token = $script:NEPXY_TOKEN
   )
   $idem = New-IdempotencyKey
   if (-not $ProviderRef) { $ProviderRef = "cashin-" + (New-IdempotencyKey) }
 
-  $resp = Invoke-NexaPay -Method POST -Path "/v1/cash-in/mobile-money" -Token $Token -IdempotencyKey $idem -JsonBody @{
+  $resp = Invoke-Nepxy -Method POST -Path "/v1/cash-in/mobile-money" -Token $Token -IdempotencyKey $idem -JsonBody @{
     wallet_id    = $WalletId
     amount_cents = $AmountCents
     country      = $Country
@@ -155,12 +161,12 @@ function New-CashOutMobileMoney {
     [ValidateSet("TMONEY","FLOOZ","MOMO")][string]$Provider = "TMONEY",
     [string]$PhoneE164 = "+22890009911",
     [string]$ProviderRef = $null,
-    [string]$Token = $script:NEXA_TOKEN
+    [string]$Token = $script:NEPXY_TOKEN
   )
   $idem = New-IdempotencyKey
   if (-not $ProviderRef) { $ProviderRef = "cashout-" + (New-IdempotencyKey) }
 
-  $resp = Invoke-NexaPay -Method POST -Path "/v1/cash-out/mobile-money" -Token $Token -IdempotencyKey $idem -JsonBody @{
+  $resp = Invoke-Nepxy -Method POST -Path "/v1/cash-out/mobile-money" -Token $Token -IdempotencyKey $idem -JsonBody @{
     wallet_id    = $WalletId
     amount_cents = $AmountCents
     country      = $Country
@@ -181,9 +187,9 @@ function New-CashOutMobileMoney {
 function Get-PayoutStatus {
   param(
     [Parameter(Mandatory=$true)][string]$TransactionId,
-    [string]$Token = $script:NEXA_TOKEN
+    [string]$Token = $script:NEPXY_TOKEN
   )
-  Invoke-NexaPay -Method GET -Path "/v1/payouts/$TransactionId" -Token $Token
+  Invoke-Nepxy -Method GET -Path "/v1/payouts/$TransactionId" -Token $Token
 }
 
 # ---- 7) Webhooks (sandbox) ----
@@ -192,7 +198,7 @@ function Send-TmoneyWebhook {
     [Parameter(Mandatory=$true)][string]$ProviderRef,
     [ValidateSet("SUCCESS","FAILED","SENT","PENDING")][string]$Status = "SUCCESS"
   )
-  Invoke-NexaPay -Method POST -Path "/v1/webhooks/tmoney" -Token $null -JsonBody @{
+  Invoke-Nepxy -Method POST -Path "/v1/webhooks/tmoney" -Token $null -JsonBody @{
     provider_ref = $ProviderRef
     status       = $Status
   }
@@ -205,9 +211,9 @@ function Send-TmoneyWebhook {
 function Set-PayoutConfirmed_Admin {
   param(
     [Parameter(Mandatory=$true)][string]$TransactionId,
-    [string]$Token = $script:NEXA_TOKEN
+    [string]$Token = $script:NEPXY_TOKEN
   )
-  Invoke-NexaPay -Method POST -Path "/v1/admin/mobile-money/payouts/$TransactionId/confirmed" -Token $Token
+  Invoke-Nepxy -Method POST -Path "/v1/admin/mobile-money/payouts/$TransactionId/confirmed" -Token $Token
 }
 
 # ---- 9) Worker metrics (debug) ----
@@ -215,15 +221,15 @@ function Set-PayoutConfirmed_Admin {
 function Get-PayoutWorkerMetrics {
   param(
     [int]$StaleSeconds = 60,
-    [string]$Token = $script:NEXA_TOKEN
+    [string]$Token = $script:NEPXY_TOKEN
   )
-  Invoke-NexaPay -Method GET -Path "/v1/admin/mobile-money/payouts/metrics?stale_seconds=$StaleSeconds" -Token $Token
+  Invoke-Nepxy -Method GET -Path "/v1/admin/mobile-money/payouts/metrics?stale_seconds=$StaleSeconds" -Token $Token
 }
 
 function Get-PayoutWorkerMetricsPretty {
   param(
     [int]$StaleSeconds = 60,
-    [string]$Token = $script:NEXA_TOKEN
+    [string]$Token = $script:NEPXY_TOKEN
   )
 
   $m = Get-PayoutWorkerMetrics -StaleSeconds $StaleSeconds -Token $Token
@@ -245,8 +251,8 @@ function Get-PayoutWorkerMetricsPretty {
 # ============================
 # Quickstart (copy/paste)
 # ============================
-# Set-NexaPayBaseUrl "http://127.0.0.1:8001"
-# $TOKEN = Get-NexaPayToken -Email "admin@nexapay.io" -Password "<REDACTED>"
+# Set-NepxyBaseUrl "http://127.0.0.1:8001"
+# $TOKEN = Get-NepxyToken -Email "admin@nexapay.io" -Password "<REDACTED>"
 # $wallets = Get-MyWallets
 # $WALLET_ID = $wallets[0].wallet_id
 # Get-WalletBalance -WalletId $WALLET_ID
@@ -257,3 +263,4 @@ function Get-PayoutWorkerMetricsPretty {
 # $pref = (Get-PayoutStatus -TransactionId $tx).provider_ref
 # Send-TmoneyWebhook -ProviderRef $pref -Status "SUCCESS"
 # Get-PayoutStatus -TransactionId $tx | Format-List
+
