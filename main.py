@@ -1,41 +1,143 @@
 
-#main.py
-from fastapi import FastAPI
+
+# main.py
+from __future__ import annotations
+
+import logging
+import os
+from contextlib import asynccontextmanager
+from typing import List
+
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
+
 from routes.wallet import router as wallet_router
 from routes.payments import router as payments_router
-import psycopg2
-from fastapi import Request
-from fastapi.responses import JSONResponse
 from routes.debug import router as debug_router
 from routes.auth import router as auth_router
+from routes.auth_google import router as auth_google_router
 from routes.fx import router as fx_router
 from routes.admin_ledger import router as admin_ledger_router
 from routes.admin_roles import router as admin_roles_router
 from routes.p2p import router as p2p_router
+from routes.admin_mobile_money import router as admin_metrics_router
+from routes.mock_tmoney import router as mock_tmoney_router
+from routes.payouts import router as payouts_router
+from routes.webhooks import router as webhooks_router
+from routes.admin_webhooks import router as admin_webhooks_router
+
+from app.providers.mobile_money.validate import validate_mobile_money_startup
+from app.providers.mobile_money.config import mm_mode, enabled_providers, is_strict_startup_validation
+
+logger = logging.getLogger("nexapay")
 
 
-
-app = FastAPI(title="NexaPay API", version="1.0.0")
-
-# -----------------------------
-# ROUTERS
-# -----------------------------
-
-app.include_router(wallet_router)
-app.include_router(payments_router)
-app.include_router(debug_router)
-app.include_router(auth_router)
-app.include_router(fx_router)
-app.include_router(admin_ledger_router)
-app.include_router(admin_roles_router)
-app.include_router(p2p_router)
+def _configure_logging_once() -> None:
+    root = logging.getLogger()
+    if root.handlers:
+        return
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 
 
-@app.exception_handler(Exception)
-async def unhandled_error_handler(request: Request, exc: Exception):
-    return JSONResponse(
-        status_code=500,
-        content={"detail": "Internal server error"},
+def _parse_csv_env(name: str, default: str = "") -> List[str]:
+    raw = os.getenv(name, default) or ""
+    items = [x.strip() for x in raw.split(",") if x.strip()]
+    # de-dup while preserving order
+    seen = set()
+    out: List[str] = []
+    for it in items:
+        if it not in seen:
+            seen.add(it)
+            out.append(it)
+    return out
+
+
+def _dev_cors_origins() -> List[str]:
+    """
+    Expo web + local dev can run on different ports.
+    Keep this permissive in dev, tight in prod.
+    Optionally override via CORS_ALLOW_ORIGINS env (comma-separated).
+    """
+    env_origins = _parse_csv_env("CORS_ALLOW_ORIGINS", "")
+    if env_origins:
+        return env_origins
+
+    # Common Expo + local dev origins
+    return [
+        "http://localhost:8081",
+        "http://127.0.0.1:8081",
+        "http://localhost:19006",
+        "http://127.0.0.1:19006",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        # Keep your LAN IPs for testing on other devices
+        "http://192.168.1.152:8081",
+        "http://192.168.1.151:8081",
+    ]
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    _configure_logging_once()
+
+    mode = (mm_mode() or "sandbox").strip().lower()
+    strict = bool(is_strict_startup_validation())
+    providers = sorted(enabled_providers() or [])
+
+    logger.info(
+        "BOOT NepXy API | MM_MODE=%s | MM_STRICT_STARTUP_VALIDATION=%s | MM_ENABLED_PROVIDERS=%s",
+        mode,
+        strict,
+        ",".join(providers) if providers else "<none>",
     )
 
+    # Provider startup validation (sandbox-friendly unless strict enabled)
+    validate_mobile_money_startup()
 
+    yield
+    logger.info("SHUTDOWN NepXy API")
+
+
+def create_app() -> FastAPI:
+    app = FastAPI(title="NexaPay API", version="1.0.0", lifespan=lifespan)
+
+    # CORS (dev)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_dev_cors_origins(),
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    # Routers
+    app.include_router(auth_router)
+    app.include_router(auth_google_router)
+
+    app.include_router(wallet_router)
+    app.include_router(payments_router)
+    app.include_router(p2p_router)
+    app.include_router(fx_router)
+
+    app.include_router(payouts_router)
+    app.include_router(webhooks_router)
+
+    app.include_router(admin_ledger_router)
+    app.include_router(admin_roles_router)
+    app.include_router(admin_metrics_router)
+    app.include_router(admin_webhooks_router)
+
+    # dev-only helpers
+    app.include_router(debug_router)
+    app.include_router(mock_tmoney_router)
+
+    @app.exception_handler(Exception)
+    async def unhandled_error_handler(request: Request, exc: Exception):
+        logger.exception("Unhandled error: %s %s", request.method, request.url.path)
+        return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+
+    return app
+
+
+app = create_app()

@@ -130,3 +130,11 @@ def debug_jwt():
 def debug_me(user: CurrentUser = Depends(get_current_user)):
     return {"user_id": str(user.user_id)}
 
+
+from fastapi import APIRouter
+router = APIRouter(prefix="/v1", tags=["debug"])
+
+@router.get("/health")
+def health():
+    return {"ok": True}
+

@@ -1,89 +1,144 @@
 
 
 # schemas.py
-from __future__ import annotations
 
-from pydantic import BaseModel, Field, EmailStr
-from uuid import UUID
 from datetime import datetime
-from typing import Optional, List, Literal
+from enum import Enum
+from typing import List, Literal, Optional
+from uuid import UUID
 
+from pydantic import BaseModel, EmailStr, Field, ConfigDict
+
+# -----------------------------
+# Shared Types / Enums
+# -----------------------------
+
+CountryCode = Literal["TG", "BJ", "BF", "ML"]
 RoleName = Literal["ADMIN", "SUPPORT", "USER"]
 
 
-# -------- AUTH --------
+class MobileMoneyProvider(str, Enum):
+    """Mobile money providers supported in West Africa (extensible)."""
+    MOMO = "MOMO"        # MTN MoMo (or generic MoMo rail)
+    TMONEY = "TMONEY"    # Togo TMoney
+    FLOOZ = "FLOOZ"      # Moov Flooz
+    THUNES = "THUNES"    # Thunes (licensed partner / aggregator)
+
+
+E164_REGEX = r"^\+[1-9]\d{4,14}$"  # basic E.164 validation
+
+
+# -----------------------------
+# Auth
+# -----------------------------
+
 class LoginRequest(BaseModel):
-    email: str
-    password: str
+    model_config = ConfigDict(extra="forbid")
+    email: EmailStr
+    password: str = Field(min_length=1)
 
 
 class LoginResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     access_token: str
     token_type: str = "bearer"
     user_id: UUID
 
 
-# (Optional: keep if you already use it somewhere)
-class TokenResponse(BaseModel):
-    access_token: str
-    token_type: str = "bearer"
+class RegisterRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    email: EmailStr
+    phone_e164: str = Field(min_length=5, pattern=E164_REGEX)
+    full_name: Optional[str] = None
+    country: CountryCode
+    password: str = Field(min_length=8)
 
 
-# -------- PAYMENTS --------
-class P2PRequest(BaseModel):
-    sender_account_id: UUID
-    receiver_account_id: UUID
+class RegisterResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    user_id: UUID
+
+
+# -----------------------------
+# Payments
+# -----------------------------
+
+class TxnResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    transaction_id: UUID
+
+
+class P2PTransferRequest(BaseModel):
+    """Current API schema used by /v1/p2p/transfer."""
+    model_config = ConfigDict(extra="forbid")
+    from_wallet_id: UUID
+    to_wallet_id: UUID
     amount_cents: int = Field(gt=0)
-    country: str = Field(pattern="^(TG|BJ|BF|ML)$")
-    description: Optional[str] = None
+    memo: Optional[str] = None
 
 
 class MerchantPayRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     payer_account_id: UUID
     merchant_account_id: UUID
     amount_cents: int = Field(gt=0)
-    country: str = Field(pattern="^(TG|BJ|BF|ML)$")
+    country: CountryCode
     note: Optional[str] = None
 
 
 class CashInRequest(BaseModel):
-    user_account_id: UUID
+    """
+    Wallet-only cash-in contract.
+    """
+    model_config = ConfigDict(extra="forbid")
+    wallet_id: UUID
     amount_cents: int = Field(gt=0)
-    country: str = Field(pattern="^(TG|BJ|BF|ML)$")
+    country: CountryCode
     provider_ref: str = Field(min_length=3, max_length=100)
+    provider: MobileMoneyProvider = MobileMoneyProvider.MOMO
+    phone_e164: Optional[str] = Field(default=None, pattern=E164_REGEX)
 
 
 class CashOutRequest(BaseModel):
-    user_account_id: UUID
+    """
+    Wallet-only cash-out contract.
+    """
+    model_config = ConfigDict(extra="forbid")
+    wallet_id: UUID
     amount_cents: int = Field(gt=0)
-    country: str = Field(pattern="^(TG|BJ|BF|ML)$")
+    country: CountryCode
     provider_ref: str = Field(min_length=3, max_length=100)
+    provider: MobileMoneyProvider = MobileMoneyProvider.MOMO
+    phone_e164: Optional[str] = Field(default=None, pattern=E164_REGEX)
 
 
-class TxnResponse(BaseModel):
-    transaction_id: UUID
+# -----------------------------
+# Wallets
+# -----------------------------
 
-
-# -------- WALLETS --------
 class WalletItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     wallet_id: UUID
     owner_id: UUID
     owner_type: str
     currency: str
     country: str
-    account_type: str  # stored as account_type in DB, but represents WALLET here
+    account_type: str
 
 
 class WalletListResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     wallets: List[WalletItem]
 
 
 class WalletBalanceResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     wallet_id: UUID
     balance_cents: int
 
 
 class WalletTxnItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     entry_id: UUID
     transaction_id: UUID
     dc: str
@@ -93,12 +148,14 @@ class WalletTxnItem(BaseModel):
 
 
 class WalletTxnPage(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     wallet_id: UUID
     items: List[WalletTxnItem]
     next_cursor: Optional[str] = None
 
 
 class WalletActivityItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     transaction_id: UUID
     created_at: datetime
     direction: str
@@ -108,49 +165,64 @@ class WalletActivityItem(BaseModel):
 
 
 class WalletActivityPage(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     wallet_id: UUID
     items: List[WalletActivityItem]
     next_cursor: Optional[str] = None
 
 
-class LedgerIntegrityCheckResponse(BaseModel):
-    mismatches: int
-    repaired: bool
+# -----------------------------
+# Admin / Ledger Tools
+# -----------------------------
 
 class LedgerIntegrityCheckRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     repair: bool = False
     account_id: Optional[UUID] = None
 
 
-#
+class LedgerIntegrityCheckResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    mismatches: int
+    repaired: bool
+
+
 class AdminSetRoleRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     target_user_id: UUID
     role: RoleName
 
+
 class AdminClearRoleRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     target_user_id: UUID
 
+
 class UserRoleItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     user_id: UUID
     role: str
     created_at: datetime
 
+
 class UserRoleListResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     items: List[UserRoleItem]
 
 
-class RegisterRequest(BaseModel):
-    email: EmailStr
-    phone_e164: str = Field(min_length=5)
-    full_name: str | None = None
-    country: str  # cast in SQL to ledger.country_code
-    password: str = Field(min_length=8)
-
-class RegisterResponse(BaseModel):
-    user_id: UUID
-
-class P2PTransferRequest(BaseModel):
-    from_wallet_id: UUID
-    to_wallet_id: UUID
-    amount_cents: int = Field(..., gt=0)
-    memo: Optional[str] = None
+class PayoutStatusResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    transaction_id: UUID
+    provider: str | None = None
+    status: str
+    attempt_count: int = 0
+    retryable: bool | None = None
+    provider_ref: str | None = None
+    last_error: str | None = None
+    last_attempt_at: datetime | None = None
+    next_retry_at: datetime | None = None
+    provider_response: dict | None = None
+    amount_cents: int | None = None
+    currency: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None

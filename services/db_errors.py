@@ -13,6 +13,7 @@ DB_ERROR_HTTP_MAP: dict[str, tuple[int, str]] = {
     "LIMIT_EXCEEDED": (429, "Limit exceeded"),
     "IDEMPOTENCY_CONFLICT": (409, "Duplicate request"),
     "INVALID_AMOUNT": (422, "Invalid amount"),
+    "INVALID_PROVIDER": (422, "Invalid provider"),
     "RATE_NOT_FOUND": (404, "Rate not found"),
     "QUOTE_NOT_FOUND": (404, "Quote not found"),
     "QUOTE_EXPIRED": (409, "Quote expired"),

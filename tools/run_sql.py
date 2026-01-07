@@ -98,7 +98,11 @@ def main() -> int:
     try:
         with psycopg2.connect(db_url) as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                cur.execute(sql_text, params)
+                if params:
+                    cur.execute(sql_text, params)
+                else:
+                    cur.execute(sql_text)
+
                 rows: List[Dict[str, Any]] = []
                 if cur.description is not None:
                     rows = cur.fetchall()

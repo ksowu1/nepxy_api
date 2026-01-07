@@ -1,10 +1,12 @@
 
 
+# db.py
 import psycopg2
 from psycopg2.pool import SimpleConnectionPool
 from contextlib import contextmanager
 from settings import settings
 import psycopg2.extras
+
 _pool: SimpleConnectionPool | None = None
 
 

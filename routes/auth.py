@@ -7,7 +7,7 @@ from pydantic import BaseModel, EmailStr
 from uuid import UUID
 
 from db import get_conn
-from security import verify_password, create_access_token, hash_password
+from security import verify_password, create_access_token, hash_password, create_session_refresh_token, validate_refresh_token
 from schemas import RegisterRequest, RegisterResponse
 
 router = APIRouter(prefix="/v1/auth", tags=["auth"])
@@ -20,8 +20,18 @@ class LoginRequest(BaseModel):
 
 class LoginResponse(BaseModel):
     access_token: str
+    refresh_token: str
     token_type: str = "bearer"
     user_id: UUID
+
+
+class RefreshRequest(BaseModel):
+    refresh_token: str
+
+
+class RefreshResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
 
 
 @router.post("/login", response_model=LoginResponse)
@@ -47,8 +57,19 @@ def login(body: LoginRequest):
     if not verify_password(body.password, password_hash_db):
         raise HTTPException(status_code=401, detail="INVALID_CREDENTIALS")
 
-    token = create_access_token(sub=str(user_id))
-    return LoginResponse(access_token=token, user_id=user_id)
+    access = create_access_token(sub=str(user_id))
+    refresh = create_session_refresh_token(user_id=user_id)
+    return LoginResponse(access_token=access, refresh_token=refresh, user_id=user_id)
+
+
+@router.post("/refresh", response_model=RefreshResponse)
+def refresh(body: RefreshRequest):
+    user_id = validate_refresh_token(body.refresh_token)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="INVALID_REFRESH_TOKEN")
+
+    access = create_access_token(sub=str(user_id))
+    return RefreshResponse(access_token=access)
 
 
 @router.post("/register", response_model=RegisterResponse)
@@ -62,11 +83,11 @@ def register(payload: RegisterRequest):
                 cur.execute(
                     """
                     SELECT users.register_user_secure(
-                      %s::text,            -- email
-                      %s::text,            -- phone_e164
-                      %s::text,            -- full_name
-                      %s::ledger.country_code, -- country enum
-                      %s::text             -- password_hash
+                      %s::text,
+                      %s::text,
+                      %s::text,
+                      %s::ledger.country_code,
+                      %s::text
                     );
                     """,
                     (payload.email, payload.phone_e164, full_name, payload.country, pw_hash),
@@ -77,10 +98,7 @@ def register(payload: RegisterRequest):
 
     except Exception as e:
         msg = str(e)
-
-        # Bubble up DB_ERROR codes as clean 400s
         if "DB_ERROR:" in msg:
             clean = msg.split("DB_ERROR:", 1)[1].strip()
             raise HTTPException(status_code=400, detail=clean)
-
         raise

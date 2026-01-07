@@ -21,11 +21,11 @@ def _get_balance(client, token: str, wallet_id: str) -> int:
 def _cash_in_momo_best_effort(client, token: str, wallet_id: str, amount_cents: int, country: str = "TG") -> bool:
     """
     Best-effort cash-in so tests are deterministic.
-    Adjust payload keys if your endpoint differs.
+    /v1/cash-in/momo accepts wallet_id only (tight contract).
     """
     provider_ref = f"pytest-cashin-{uuid.uuid4()}"
     payload = {
-        "user_account_id": wallet_id,
+        "wallet_id": wallet_id,          # ✅ was user_account_id
         "amount_cents": amount_cents,
         "country": country,
         "provider_ref": provider_ref,

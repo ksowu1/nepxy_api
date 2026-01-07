@@ -1,4 +1,5 @@
 
+
 # routes/payments.py
 from __future__ import annotations
 
@@ -13,16 +14,18 @@ from schemas import (
     MerchantPayRequest,
     CashInRequest,
     CashOutRequest,
-    P2PTransferRequest,  # ✅ use your current schema (from_wallet_id/to_wallet_id)
 )
-from services.db_errors import raise_http_from_db_error  # ✅ centralized mapper
+from services.db_errors import raise_http_from_db_error
 
 router = APIRouter(prefix="/v1", tags=["payments"])
 
 
 def require_idempotency(idempotency_key: str | None) -> str:
-    # Keep behavior consistent with rest of API:
-    # - empty/blank => conflict (same as your other routes)
+    """
+    Consistent API rule:
+      - missing/blank idempotency => 409
+      - too long => 400
+    """
     if not idempotency_key or not idempotency_key.strip():
         raise HTTPException(status_code=409, detail="IDEMPOTENCY_CONFLICT")
     key = idempotency_key.strip()
@@ -31,8 +34,12 @@ def require_idempotency(idempotency_key: str | None) -> str:
     return key
 
 
-@router.post("/cash-in/momo", response_model=TxnResponse)
-def cash_in_momo(
+# -------------------------------------------------------------------
+# MOBILE MONEY GENERIC (MOMO / TMONEY / FLOOZ)
+# -------------------------------------------------------------------
+
+@router.post("/cash-in/mobile-money", response_model=TxnResponse)
+def cash_in_mobile_money(
     body: CashInRequest,
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     user: CurrentUser = Depends(get_current_user),
@@ -44,22 +51,24 @@ def cash_in_momo(
             with conn.cursor() as cur:
                 set_db_actor(cur, user.user_id)
 
-                # NOTE: adjust function/schema name if your DB uses rails.* instead of ledger.*
                 cur.execute(
                     """
-                    SELECT ledger.post_cash_in_momo(
+                    SELECT ledger.post_cash_in_mobile_money(
                       %s::uuid, %s::uuid,
                       %s::bigint, %s::ledger.country_code,
+                      %s::text, %s::text,
                       %s::text, %s::text, %s::uuid
                     );
                     """,
                     (
-                        str(body.user_account_id),
+                        str(body.wallet_id),
                         str(user.user_id),
                         int(body.amount_cents),
                         body.country,
-                        body.provider_ref,
                         idem,
+                        body.provider_ref,
+                        body.provider.value,     # MOMO/TMONEY/FLOOZ
+                        body.phone_e164,         # optional
                         str(settings.SYSTEM_OWNER_ID),
                     ),
                 )
@@ -74,8 +83,8 @@ def cash_in_momo(
         raise HTTPException(status_code=500, detail="Database error")
 
 
-@router.post("/cash-out/momo", response_model=TxnResponse)
-def cash_out_momo(
+@router.post("/cash-out/mobile-money", response_model=TxnResponse)
+def cash_out_mobile_money(
     body: CashOutRequest,
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     user: CurrentUser = Depends(get_current_user),
@@ -87,22 +96,24 @@ def cash_out_momo(
             with conn.cursor() as cur:
                 set_db_actor(cur, user.user_id)
 
-                # NOTE: adjust function/schema name if your DB uses rails.* instead of ledger.*
                 cur.execute(
                     """
-                    SELECT ledger.post_cash_out_momo(
+                    SELECT ledger.post_cash_out_mobile_money(
                       %s::uuid, %s::uuid,
                       %s::bigint, %s::ledger.country_code,
+                      %s::text, %s::text,
                       %s::text, %s::text, %s::uuid
                     );
                     """,
                     (
-                        str(body.user_account_id),
+                        str(body.wallet_id),
                         str(user.user_id),
                         int(body.amount_cents),
                         body.country,
-                        body.provider_ref,
                         idem,
+                        body.provider_ref,
+                        body.provider.value,     # MOMO/TMONEY/FLOOZ
+                        body.phone_e164,         # optional
                         str(settings.SYSTEM_OWNER_ID),
                     ),
                 )
@@ -117,6 +128,9 @@ def cash_out_momo(
         raise HTTPException(status_code=500, detail="Database error")
 
 
+# -------------------------------------------------------------------
+# MERCHANT PAY (unchanged)
+# -------------------------------------------------------------------
 @router.post("/merchant/pay", response_model=TxnResponse)
 def merchant_pay(
     body: MerchantPayRequest,
@@ -130,7 +144,6 @@ def merchant_pay(
             with conn.cursor() as cur:
                 set_db_actor(cur, user.user_id)
 
-                # NOTE: change this call to whatever your DB function is named
                 cur.execute(
                     """
                     SELECT ledger.post_merchant_payment(
