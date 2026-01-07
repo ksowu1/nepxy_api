@@ -26,7 +26,7 @@ python -m uvicorn main:app --port 8001 --reload --reload-exclude .venv
 ```powershell
 Set-NepxyBaseUrl "http://127.0.0.1:8001"
 
-$TOKEN = Get-NepxyToken -Email "admin@nexapay.io" -Password "<REDACTED>"
+$TOKEN = Get-NepxyToken -Email "admin@nexapay.io" -Password "<YOUR_PASSWORD>"
 $wallets = Get-MyWallets
 $WALLET_ID = $wallets[0].wallet_id
 
@@ -55,7 +55,7 @@ If you added the endpoint:
 then you can quickly see what's stuck in PENDING/SENT and what's getting confirmed/failed.
 
 ```powershell
-$TOKEN = Get-NepxyToken -Email "admin@nexapay.io" -Password "<REDACTED>"
+$TOKEN = Get-NepxyToken -Email "admin@nexapay.io" -Password "<YOUR_PASSWORD>"
 Get-PayoutWorkerMetricsPretty -StaleSeconds 60
 ```
 
