@@ -1,27 +1,26 @@
 
 # Python
-__pycache__/
-*.pyc
-
-# Virtual environment
-.venv/
-
-# Env files
+# env
 .env
 
-# OS
-.DS_Store
-Thumbs.db
-
-# Logs
-*.log
-
-*DB_ERROR codes*
-*•*
-
-.pytest_cache/
+# python
 __pycache__/
 *.pyc
-.env
 .venv/
-.idea/
+
+# node
+node_modules/
+
+# local request payloads / exports
+payload.json
+cashin.json
+cashout.json
+cashout_thunes.json
+tmoney_webhook.json
+tmp_*.json
+valid_webhook_events.csv
+
+# scratch scripts (optional — only if you never want them committed)
+_check_*.py
+_peek_*.py
+debug_*.py
