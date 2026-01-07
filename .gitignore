@@ -30,3 +30,20 @@ debug_*.py
 
 mobile/nepxy/
 
+# IDE
+.idea/
+.vscode/
+
+# Node
+node_modules/
+
+# Local payloads / scratch
+scratch/
+*.local.*
+payload*.json
+tmoney_webhook.json
+tmp_*.json
+valid_webhook_events.csv
+
+# Mobile build artifacts / local projects
+mobile/nepxy/
