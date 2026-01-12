@@ -8,11 +8,28 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from psycopg2.extras import RealDictCursor
+from pydantic import BaseModel, ConfigDict
 
 from db import get_conn
 from deps.admin import require_admin
 
 router = APIRouter(prefix="/v1/admin/mobile-money", tags=["admin", "mobile-money"])
+
+class PayoutRetryRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    force: bool = False
+    reason: str | None = None
+
+
+def _serialize_retry_summary(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "transaction_id": str(row["transaction_id"]),
+        "status": row["status"],
+        "retryable": bool(row.get("retryable")),
+        "attempt_count": int(row.get("attempt_count") or 0),
+        "next_retry_at": row["next_retry_at"].isoformat() if row.get("next_retry_at") else None,
+    }
+
 
 def _serialize_payout(row: dict[str, Any]) -> dict[str, Any]:
     return {
@@ -67,27 +84,24 @@ def admin_mark_payout_confirmed(transaction_id: str, _admin=Depends(require_admi
 
 
 @router.post("/payouts/{transaction_id}/retry")
-def admin_retry_payout(transaction_id: UUID, _admin=Depends(require_admin)):
+def admin_retry_payout(
+    transaction_id: UUID,
+    body: PayoutRetryRequest | None = None,
+    _admin=Depends(require_admin),
+):
+    req = body or PayoutRetryRequest()
     with get_conn() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(
                 """
                 SELECT
                   p.transaction_id,
-                  p.provider,
-                  p.amount_cents,
-                  p.currency,
-                  p.phone_e164,
-                  p.provider_ref,
                   p.status,
-                  p.last_error,
                   p.retryable,
                   p.attempt_count,
                   p.next_retry_at,
-                  p.updated_at,
-                  tx.external_ref
+                  p.last_error
                 FROM app.mobile_money_payouts p
-                LEFT JOIN ledger.ledger_transactions tx ON tx.id = p.transaction_id
                 WHERE p.transaction_id = %s::uuid
                 """,
                 (str(transaction_id),),
@@ -96,56 +110,37 @@ def admin_retry_payout(transaction_id: UUID, _admin=Depends(require_admin)):
             if not row:
                 raise HTTPException(status_code=404, detail="Payout not found")
 
-            if row.get("retryable") is False:
-                raise HTTPException(status_code=409, detail="payout_not_retryable")
-
             status = str(row.get("status") or "")
             if status == "CONFIRMED":
-                raise HTTPException(status_code=409, detail="payout_already_confirmed")
+                raise HTTPException(status_code=409, detail="ALREADY_CONFIRMED")
 
-            if status in ("FAILED", "RETRY"):
+            if status == "PENDING":
+                return _serialize_retry_summary(row)
+
+            if status == "FAILED":
+                if row.get("retryable") is False and not req.force:
+                    raise HTTPException(status_code=409, detail="NOT_RETRYABLE")
+
                 cur.execute(
                     """
                     UPDATE app.mobile_money_payouts
                     SET status = 'PENDING',
                         next_retry_at = now(),
                         last_error = NULL,
+                        retryable = TRUE,
                         updated_at = now()
                     WHERE transaction_id = %s::uuid
-                    """,
-                    (str(transaction_id),),
-                )
-
-                cur.execute(
-                    """
-                    SELECT
-                      p.transaction_id,
-                      p.provider,
-                      p.amount_cents,
-                      p.currency,
-                      p.phone_e164,
-                      p.provider_ref,
-                      p.status,
-                      p.last_error,
-                      p.retryable,
-                      p.attempt_count,
-                      p.next_retry_at,
-                      p.updated_at,
-                      tx.external_ref
-                    FROM app.mobile_money_payouts p
-                    LEFT JOIN ledger.ledger_transactions tx ON tx.id = p.transaction_id
-                    WHERE p.transaction_id = %s::uuid
+                    RETURNING transaction_id, status, retryable, attempt_count, next_retry_at
                     """,
                     (str(transaction_id),),
                 )
                 row = cur.fetchone()
-
-            elif status not in ("PENDING",):
-                raise HTTPException(status_code=409, detail="payout_status_not_retryable")
+            else:
+                raise HTTPException(status_code=409, detail="NOT_RETRYABLE")
 
         conn.commit()
 
-    return _serialize_payout(row)
+    return _serialize_retry_summary(row)
 
 
 @router.get("/payouts")

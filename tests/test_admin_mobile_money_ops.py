@@ -10,6 +10,7 @@ def _insert_payout(
     status: str,
     provider: str = "TMONEY",
     retryable: bool = True,
+    attempt_count: int = 0,
 ) -> uuid.UUID:
     payout_id = uuid.uuid4()
     tx_id = uuid.uuid4()
@@ -28,7 +29,7 @@ def _insert_payout(
             VALUES (
               %s, %s, %s, %s, %s,
               %s, %s, %s,
-              %s, 0, NULL, NULL, %s, NULL,
+              %s, %s, NULL, NULL, %s, NULL,
               %s, %s
             )
             """,
@@ -42,6 +43,7 @@ def _insert_payout(
                 1000,
                 "XOF",
                 "ERR" if status in ("FAILED", "RETRY") else None,
+                int(attempt_count),
                 retryable,
                 now,
                 now,
@@ -88,7 +90,7 @@ def test_non_admin_cannot_list_payouts(client, user2):
 
 
 def test_admin_retry_failed_payout_sets_pending(client, admin_user):
-    tx_id = _insert_payout(status="FAILED", retryable=True)
+    tx_id = _insert_payout(status="FAILED", retryable=True, attempt_count=2)
     r = client.post(
         f"/v1/admin/mobile-money/payouts/{tx_id}/retry",
         headers=_auth_headers(admin_user.token),
@@ -97,12 +99,13 @@ def test_admin_retry_failed_payout_sets_pending(client, admin_user):
     body = r.json()
     assert body["status"] == "PENDING"
     assert body["next_retry_at"] is not None
+    assert body["attempt_count"] == 2
 
     with get_conn() as conn:
         cur = conn.cursor()
         cur.execute(
             """
-            SELECT status, last_error, next_retry_at
+            SELECT status, last_error, next_retry_at, retryable, attempt_count
             FROM app.mobile_money_payouts
             WHERE transaction_id = %s::uuid
             """,
@@ -112,6 +115,8 @@ def test_admin_retry_failed_payout_sets_pending(client, admin_user):
         assert row[0] == "PENDING"
         assert row[1] is None
         assert row[2] is not None
+        assert row[3] is True
+        assert row[4] == 2
 
 
 def test_retry_confirmed_payout_returns_409(client, admin_user):
@@ -121,6 +126,7 @@ def test_retry_confirmed_payout_returns_409(client, admin_user):
         headers=_auth_headers(admin_user.token),
     )
     assert r.status_code == 409, r.text
+    assert r.json().get("detail") == "ALREADY_CONFIRMED"
 
 
 def test_retry_non_retryable_returns_409(client, admin_user):
@@ -130,7 +136,37 @@ def test_retry_non_retryable_returns_409(client, admin_user):
         headers=_auth_headers(admin_user.token),
     )
     assert r.status_code == 409, r.text
-    assert r.json().get("detail") == "payout_not_retryable"
+    assert r.json().get("detail") == "NOT_RETRYABLE"
+
+
+def test_retry_non_retryable_with_force_succeeds(client, admin_user):
+    tx_id = _insert_payout(status="FAILED", retryable=False, attempt_count=3)
+    r = client.post(
+        f"/v1/admin/mobile-money/payouts/{tx_id}/retry",
+        headers=_auth_headers(admin_user.token),
+        json={"force": True, "reason": "manual retry"},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["status"] == "PENDING"
+    assert body["attempt_count"] == 3
+
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT status, last_error, next_retry_at, retryable, attempt_count
+            FROM app.mobile_money_payouts
+            WHERE transaction_id = %s::uuid
+            """,
+            (str(tx_id),),
+        )
+        row = cur.fetchone()
+        assert row[0] == "PENDING"
+        assert row[1] is None
+        assert row[2] is not None
+        assert row[3] is True
+        assert row[4] == 3
 
 
 def test_admin_webhook_events_for_payout(client, admin_user):
