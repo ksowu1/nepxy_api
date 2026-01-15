@@ -12,6 +12,7 @@ from schemas import (
     UserRoleListResponse,
     UserRoleItem,
 )
+from services.audit_log import write_audit_log
 
 router = APIRouter(prefix="/v1/admin/roles", tags=["admin-roles"])
 
@@ -37,6 +38,13 @@ def set_role(payload: AdminSetRoleRequest, admin: CurrentUser = Depends(require_
                 "SELECT users.set_user_role_secure(%s::uuid, %s::text);",
                 (str(payload.target_user_id), payload.role),
             )
+        write_audit_log(
+            conn,
+            actor_user_id=str(admin.user_id),
+            action="ROLE_SET",
+            target_id=str(payload.target_user_id),
+            metadata={"role": payload.role},
+        )
     return {"ok": True}
 
 
@@ -49,4 +57,11 @@ def clear_role(payload: AdminClearRoleRequest, admin: CurrentUser = Depends(requ
                 "SELECT users.clear_user_role_secure(%s::uuid);",
                 (str(payload.target_user_id),),
             )
+        write_audit_log(
+            conn,
+            actor_user_id=str(admin.user_id),
+            action="ROLE_CLEAR",
+            target_id=str(payload.target_user_id),
+            metadata={},
+        )
     return {"ok": True}

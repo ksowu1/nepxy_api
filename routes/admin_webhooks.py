@@ -10,12 +10,19 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Path
 
 from db import get_conn
 from services.roles import require_admin
+from deps.auth import CurrentUser
+from services.audit_log import write_audit_log
 from app.payouts.repository import update_status_by_any_ref, get_payout_by_any_ref
+from app.providers.mobile_money.thunes import ThunesProvider
 
 router = APIRouter(prefix="/v1/admin/webhooks", tags=["admin_webhooks"])
 
 
-def _map_provider_status(status_raw: str):
+def _map_provider_status(status_raw: str, provider: str | None = None):
+    if (provider or "").strip().upper() == "THUNES":
+        mapped_status, retryable, last_error = ThunesProvider.map_thunes_status(status_raw)
+        return (mapped_status, retryable, last_error, None)
+
     status = (status_raw or "").strip().upper()
 
     if status in ("SUCCESS", "SUCCESSFUL", "CONFIRMED", "COMPLETED"):
@@ -27,12 +34,20 @@ def _map_provider_status(status_raw: str):
 
 
 def _extract_refs(payload: dict) -> tuple[str | None, str | None, str]:
-    provider_ref = (payload.get("provider_ref") or payload.get("providerReference") or payload.get("reference") or "")
+    provider_ref = (
+        payload.get("provider_ref")
+        or payload.get("providerReference")
+        or payload.get("reference")
+        or payload.get("transaction_id")
+        or payload.get("id")
+        or ""
+    )
     provider_ref = str(provider_ref).strip() or None
 
     external_ref = (
         payload.get("external_ref")
         or payload.get("externalReference")
+        or payload.get("external_id")
         or payload.get("client_ref")
         or payload.get("clientReference")
         or payload.get("merchant_ref")
@@ -129,7 +144,7 @@ def list_events(
 def replay_event(
     event_id: str = Path(...),
     allow_terminal_override: bool = Query(False),
-    _admin=Depends(require_admin),
+    admin: CurrentUser = Depends(require_admin),
 ):
     """
     Re-process a previously stored webhook event payload and apply it to payout state again.
@@ -165,7 +180,7 @@ def replay_event(
         if not provider_ref and not external_ref:
             raise HTTPException(status_code=400, detail={"error": "MISSING_REFS", "event_id": event_id})
 
-        new_status, retryable, last_error, next_retry_at = _map_provider_status(status_raw)
+        new_status, retryable, last_error, next_retry_at = _map_provider_status(status_raw, provider=provider)
 
         ok = update_status_by_any_ref(
             conn,
@@ -191,6 +206,21 @@ def replay_event(
                 reason = "NOT_UPDATED"
             else:
                 reason = "PAYOUT_NOT_FOUND"
+
+        write_audit_log(
+            conn,
+            actor_user_id=str(admin.user_id),
+            action="WEBHOOK_REPLAY",
+            target_id=str(event_id),
+            metadata={
+                "provider": provider,
+                "provider_ref": provider_ref,
+                "external_ref": external_ref,
+                "applied": bool(ok),
+                "ignored": bool(ignored),
+                "reason": reason,
+            },
+        )
 
         conn.commit()
 

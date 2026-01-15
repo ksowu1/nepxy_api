@@ -13,7 +13,7 @@ def test_admin_can_mark_payout_confirmed(client, admin_user, user1, wallet1_xof)
     payload_out = {
         "wallet_id": wallet1_xof,   # ✅ tightened contract: wallet_id only
         "amount_cents": 100,
-        "country": "TG",
+        "country": "BJ",
         "provider_ref": f"demo-ref-{uuid.uuid4()}",
         "provider": "TMONEY",
         "phone_e164": "+22890000000",

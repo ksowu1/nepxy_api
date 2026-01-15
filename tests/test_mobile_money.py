@@ -68,7 +68,7 @@ def test_cash_out_tmoney_success(client, user2, funded_wallet2_xof):
     payload_out = {
         "wallet_id": funded_wallet2_xof,
         "amount_cents": 100,
-        "country": "TG",
+        "country": "BJ",
         "provider_ref": f"cashout-ref-{uuid.uuid4()}",
         "provider": "TMONEY",
         "phone_e164": "+22890000000",

@@ -1,8 +1,16 @@
 import uuid
+import hmac
+import hashlib
+import json
 from datetime import datetime, timezone
 
 from db import get_conn
 from tests.conftest import _auth_headers
+
+
+def _sign(body_bytes: bytes, secret: str) -> str:
+    sig = hmac.new(secret.encode("utf-8"), body_bytes, hashlib.sha256).hexdigest()
+    return f"sha256={sig}"
 
 
 def _insert_payout(
@@ -169,44 +177,62 @@ def test_retry_non_retryable_with_force_succeeds(client, admin_user):
         assert row[4] == 3
 
 
-def test_admin_webhook_events_for_payout(client, admin_user):
-    tx_id = _insert_payout(status="PENDING")
-    event_hash = uuid.uuid4().hex
+def test_admin_webhook_events_for_payout(client, admin_user, user1, wallet1_xof, monkeypatch):
+    monkeypatch.setenv("TMONEY_WEBHOOK_SECRET", "dev_secret_tmoney")
 
-    with get_conn() as conn:
-        cur = conn.cursor()
-        cur.execute(
-            """
-            INSERT INTO app.webhook_events (
-              provider, external_ref, provider_ref, status_raw, payload, headers,
-              received_at, payout_transaction_id, signature_valid, event_hash
-            )
-            VALUES (
-              %s, %s, %s, %s, %s::jsonb, %s::jsonb,
-              now(), %s::uuid, %s, %s
-            )
-            """,
-            (
-                "TMONEY",
-                "ext-1",
-                "prov-1",
-                "SUCCESS",
-                "{}",
-                "{}",
-                str(tx_id),
-                True,
-                event_hash,
-            ),
-        )
-        conn.commit()
+    cashin_ref = f"pytest-cashin-{uuid.uuid4()}"
+    r = client.post(
+        "/v1/cash-in/mobile-money",
+        json={
+            "wallet_id": wallet1_xof,
+            "amount_cents": 2000,
+            "country": "TG",
+            "provider_ref": cashin_ref,
+            "provider": "TMONEY",
+        },
+        headers=_auth_headers(user1.token, idem=cashin_ref),
+    )
+    assert r.status_code in (200, 201), r.text
+
+    r = client.post(
+        "/v1/cash-out/mobile-money",
+        json={
+            "wallet_id": wallet1_xof,
+            "amount_cents": 100,
+            "country": "BJ",
+            "provider_ref": f"cashout-{uuid.uuid4()}",
+            "provider": "TMONEY",
+            "phone_e164": "+22890009911",
+        },
+        headers=_auth_headers(user1.token, idem=f"idem-{uuid.uuid4()}"),
+    )
+    assert r.status_code in (200, 201), r.text
+    tx_id = r.json()["transaction_id"]
+
+    payout = client.get(
+        f"/v1/payouts/{tx_id}",
+        headers=_auth_headers(user1.token),
+    )
+    assert payout.status_code == 200, payout.text
+    ext = payout.json()["external_ref"]
+
+    body_obj = {"external_ref": ext, "status": "SUCCESS"}
+    body_bytes = json.dumps(body_obj, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    sig = _sign(body_bytes, "dev_secret_tmoney")
+
+    r = client.post(
+        "/v1/webhooks/tmoney",
+        content=body_bytes,
+        headers={"Content-Type": "application/json", "X-Signature": sig},
+    )
+    assert r.status_code == 200, r.text
 
     r = client.get(
         f"/v1/admin/mobile-money/payouts/{tx_id}/webhook-events?limit=50",
         headers=_auth_headers(admin_user.token),
     )
     assert r.status_code == 200, r.text
-    events = r.json()["events"]
-    assert events, "Expected at least one webhook event"
-    assert "signature_valid" in events[0]
-    assert "event_hash" in events[0]
-    assert "created_at" in events[0]
+    body = r.json()
+    assert body["count"] >= 1
+    events = body["events"]
+    assert any(e.get("external_ref") == ext for e in events)

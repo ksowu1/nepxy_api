@@ -1,0 +1,460 @@
+diff --git a/settings.py b/settings.py
+new file mode 100644
+index 0000000..d0ad03d
+--- /dev/null
++++ b/settings.py
+@@ -0,0 +1,290 @@
++
++
++# settings.py
++from __future__ import annotations
++
++from pathlib import Path
++from typing import Literal
++from uuid import UUID
++
++from pydantic import Field
++from pydantic_settings import BaseSettings, SettingsConfigDict
++
++
++BASE_DIR = Path(__file__).resolve().parent  # settings.py folder
++ENV_PATH = BASE_DIR / ".env"
++
++
++class Settings(BaseSettings):
++    model_config = SettingsConfigDict(
++        env_file=str(ENV_PATH),  # ??? absolute path so worker & api behave the same
++        extra="ignore",
++    )
++
++    # -----------------------
++    # Environment
++    # -----------------------
++    ENV: Literal["dev", "staging", "prod"] = "dev"
++
++    # -----------------------
++    # DB
++    # -----------------------
++    DATABASE_URL: str = Field(...)
++
++    # -----------------------
++    # System owner
++    # -----------------------
++    SYSTEM_OWNER_ID: UUID = Field(default=UUID("00000000-0000-0000-0000-000000000001"))
++
++    # -----------------------
++    # JWT
++    # -----------------------
++    JWT_SECRET: str = Field(default="dev-secret-change-me", min_length=16)
++    JWT_ALG: str = Field(default="HS256")
++    JWT_ACCESS_MINUTES: int = Field(default=60, ge=1)
++    JWT_REFRESH_DAYS: int = Field(default=30, ge=1)
++
++    # -----------------------
++    # CORS
++    # -----------------------
++    CORS_ALLOW_ORIGINS: str = ""
++
++    # -----------------------
++    # Velocity limits (fraud/abuse controls)
++    # -----------------------
++    MAX_CASHOUT_PER_DAY_CENTS: int = 0
++    MAX_CASHOUT_COUNT_PER_DAY: int = 0
++    MAX_DISTINCT_RECEIVERS_PER_DAY: int = 0
++    MAX_CASHIN_PER_DAY_CENTS: int = 0
++
++    # -----------------------
++    # Mobile Money (Mode Switch)
++    # -----------------------
++    MM_MODE: Literal["sandbox", "real"] = "sandbox"
++    MM_STRICT_STARTUP_VALIDATION: bool = False
++    MM_ENABLED_PROVIDERS: str = "TMONEY,FLOOZ,MTN_MOMO,THUNES"
++
++    # HTTP timeouts
++    MM_HTTP_TIMEOUT_S: float = 20.0
++    MOMO_HTTP_TIMEOUT_S: float = 20.0
++
++    # -----------------------
++    # TMONEY (sandbox/real)
++    # -----------------------
++    TMONEY_AUTH_MODE: str = "bearer"  # "bearer" or "x-api-key"
++
++    TMONEY_SANDBOX_API_KEY: str = ""
++    TMONEY_SANDBOX_CASHOUT_URL: str = ""
++    TMONEY_SANDBOX_STATUS_URL_TEMPLATE: str = ""
++
++    TMONEY_REAL_API_KEY: str = ""
++    TMONEY_REAL_CASHOUT_URL: str = ""
++    TMONEY_REAL_STATUS_URL_TEMPLATE: str = ""
++
++    # Backward-compat
++    TMONEY_API_KEY: str = ""
++    TMONEY_CASHOUT_URL: str = ""
++    TMONEY_STATUS_URL_TEMPLATE: str = ""
++    TMONEY_WEBHOOK_SECRET: str = ""
++
++    # -----------------------
++    # FLOOZ (sandbox/real)
++    # -----------------------
++    FLOOZ_AUTH_MODE: str = "bearer"  # "bearer" or "x-api-key"
++
++    FLOOZ_SANDBOX_API_KEY: str = ""
++    FLOOZ_SANDBOX_CASHOUT_URL: str = ""
++    FLOOZ_SANDBOX_STATUS_URL_TEMPLATE: str = ""
++
++    FLOOZ_REAL_API_KEY: str = ""
++    FLOOZ_REAL_CASHOUT_URL: str = ""
++    FLOOZ_REAL_STATUS_URL_TEMPLATE: str = ""
++
++    # Backward-compat
++    FLOOZ_API_KEY: str = ""
++    FLOOZ_CASHOUT_URL: str = ""
++    FLOOZ_STATUS_URL_TEMPLATE: str = ""
++    FLOOZ_WEBHOOK_SECRET: str = ""
++
++    # -----------------------
++    # MTN MOMO (Disbursement) ??? sandbox/real
++    # -----------------------
++    MOMO_TARGET_ENV: str = "sandbox"
++
++    MOMO_SANDBOX_BASE_URL: str = ""
++    MOMO_REAL_BASE_URL: str = ""
++
++    MOMO_SANDBOX_SUBSCRIPTION_KEY_DISBURSEMENT: str = ""
++    MOMO_SANDBOX_API_USER: str = ""
++    MOMO_SANDBOX_API_KEY: str = ""
++
++    MOMO_REAL_SUBSCRIPTION_KEY_DISBURSEMENT: str = ""
++    MOMO_REAL_API_USER: str = ""
++    MOMO_REAL_API_KEY: str = ""
++
++    MOMO_CALLBACK_URL: str = ""
++
++    # Backward-compat
++    MOMO_BASE_URL: str = ""
++    MOMO_SUBSCRIPTION_KEY_DISBURSEMENT: str = ""
++    MOMO_API_USER: str = ""
++    MOMO_API_KEY: str = ""
++    MOMO_WEBHOOK_SECRET: str = ""
++
++    # -----------------------
++    # THUNES (sandbox/real)
++    # -----------------------
++    THUNES_SANDBOX_BASE_URL: str = ""
++    THUNES_REAL_BASE_URL: str = ""
++
++    THUNES_SANDBOX_API_KEY: str = ""
++    THUNES_REAL_API_KEY: str = ""
++
++    THUNES_SANDBOX_TOKEN_URL: str = ""
++    THUNES_REAL_TOKEN_URL: str = ""
++    THUNES_SANDBOX_CLIENT_ID: str = ""
++    THUNES_SANDBOX_CLIENT_SECRET: str = ""
++    THUNES_REAL_CLIENT_ID: str = ""
++    THUNES_REAL_CLIENT_SECRET: str = ""
++
++    THUNES_WEBHOOK_SECRET: str = ""
++    THUNES_ALLOW_UNSIGNED_WEBHOOKS: bool = True
++
++    # -----------------------
++    # THUNES (Money Transfer API v2)
++    # -----------------------
++    THUNES_SANDBOX_API_ENDPOINT: str = ""
++    THUNES_SANDBOX_API_KEY: str = ""
++    THUNES_SANDBOX_API_SECRET: str = ""
++
++    THUNES_REAL_API_ENDPOINT: str = ""
++    THUNES_REAL_API_KEY: str = ""
++    THUNES_REAL_API_SECRET: str = ""
++
++    THUNES_USE_SIMULATION: bool = True
++
++    THUNES_PAYER_ID_TG: str = ""
++    THUNES_PAYER_ID_BJ: str = ""
++
++    THUNES_TX_TYPE: str = "C2C"
++    THUNES_QUOTE_MODE: str = "DESTINATION_AMOUNT"
++
++    THUNES_SOURCE_CURRENCY: str = "USD"
++    THUNES_SOURCE_COUNTRY_ISO3: str = "USA"
++
++    THUNES_SENDER_FIRSTNAME: str = "John"
++    THUNES_SENDER_LASTNAME: str = "Doe"
++    THUNES_SENDER_DOB: str = "1970-01-01"
++    THUNES_SENDER_GENDER: str = "MALE"
++    THUNES_SENDER_NATIONALITY_ISO3: str = "USA"
++    THUNES_SENDER_COUNTRY_OF_BIRTH_ISO3: str = "USA"
++    THUNES_SENDER_ADDRESS: str = "42 Main Street"
++    THUNES_SENDER_CITY: str = "New York"
++    THUNES_SENDER_POSTAL: str = "10001"
++    THUNES_SENDER_COUNTRY_ISO3: str = "USA"
++
++    # -----------------------
++    # Google sign-in (optional)
++    # -----------------------
++    GOOGLE_WEB_CLIENT_ID: str = ""
++    GOOGLE_ANDROID_CLIENT_ID: str = ""
++    GOOGLE_IOS_CLIENT_ID: str = ""
++
++
++settings = Settings()
++
++# -----------------------
++# FX static rates (dev)
++# -----------------------
++# NOTE: These are dev placeholders for UI/testing. Replace with provider rates.
++FX_STATIC_RATES = {
++    ("USD", "ZAR"): 18.75,
++    ("USD", "NGN"): 1600.0,
++    ("USD", "EGP"): 50.0,
++    ("USD", "KES"): 155.0,
++    ("USD", "GHS"): 12.34,
++    ("USD", "XOF"): 610.0,
++    ("USD", "XAF"): 610.0,
++    ("USD", "MAD"): 10.2,
++}
++
++
++def _normalize_provider(value: str) -> str:
++    v = (value or "").strip().upper().replace("-", "_").replace(" ", "_")
++    if v == "MOMO":
++        return "MTN_MOMO"
++    return v
++
++
++def _enabled_providers_from_settings() -> set[str]:
++    raw = settings.MM_ENABLED_PROVIDERS or ""
++    items = [i.strip() for i in raw.split(",") if i.strip()]
++    return {_normalize_provider(p) for p in items}
++
++
++def _missing_if_empty(missing: list[str], name: str, value: str) -> None:
++    if not (value or "").strip():
++        missing.append(name)
++
++
++def validate_env_settings() -> None:
++    import logging
++
++    logger = logging.getLogger("nexapay")
++    env = (settings.ENV or "dev").strip().lower()
++    providers = _enabled_providers_from_settings()
++
++    missing: list[str] = []
++
++    # Always required in prod
++    if env == "prod":
++        _missing_if_empty(missing, "DATABASE_URL", settings.DATABASE_URL)
++        if settings.JWT_SECRET == "dev-secret-change-me":
++            missing.append("JWT_SECRET")
++
++        if "TMONEY" in providers:
++            _missing_if_empty(missing, "TMONEY_WEBHOOK_SECRET", getattr(settings, "TMONEY_WEBHOOK_SECRET", ""))
++        if "FLOOZ" in providers:
++            _missing_if_empty(missing, "FLOOZ_WEBHOOK_SECRET", getattr(settings, "FLOOZ_WEBHOOK_SECRET", ""))
++        if "MTN_MOMO" in providers:
++            _missing_if_empty(missing, "MOMO_WEBHOOK_SECRET", getattr(settings, "MOMO_WEBHOOK_SECRET", ""))
++        if "THUNES" in providers:
++            _missing_if_empty(missing, "THUNES_WEBHOOK_SECRET", settings.THUNES_WEBHOOK_SECRET)
++            if settings.THUNES_ALLOW_UNSIGNED_WEBHOOKS:
++                missing.append("THUNES_ALLOW_UNSIGNED_WEBHOOKS")
++            if settings.MM_MODE == "real":
++                _missing_if_empty(missing, "THUNES_REAL_API_ENDPOINT", settings.THUNES_REAL_API_ENDPOINT)
++                _missing_if_empty(missing, "THUNES_REAL_API_KEY", settings.THUNES_REAL_API_KEY)
++                _missing_if_empty(missing, "THUNES_REAL_API_SECRET", settings.THUNES_REAL_API_SECRET)
++
++        google_any = any(
++            [
++                settings.GOOGLE_WEB_CLIENT_ID,
++                settings.GOOGLE_ANDROID_CLIENT_ID,
++                settings.GOOGLE_IOS_CLIENT_ID,
++            ]
++        )
++        if google_any:
++            _missing_if_empty(missing, "GOOGLE_WEB_CLIENT_ID", settings.GOOGLE_WEB_CLIENT_ID)
++            _missing_if_empty(missing, "GOOGLE_ANDROID_CLIENT_ID", settings.GOOGLE_ANDROID_CLIENT_ID)
++            _missing_if_empty(missing, "GOOGLE_IOS_CLIENT_ID", settings.GOOGLE_IOS_CLIENT_ID)
++
++        if missing:
++            raise RuntimeError(
++                "ENV validation failed for prod. Missing required env vars: "
++                + ", ".join(sorted(set(missing)))
++            )
++        return
++
++    # Dev/staging: warn only
++    if settings.JWT_SECRET == "dev-secret-change-me":
++        logger.warning("ENV=%s using default JWT_SECRET (not for production).", env)
++
++    if "TMONEY" in providers and not getattr(settings, "TMONEY_WEBHOOK_SECRET", ""):
++        logger.warning("ENV=%s missing TMONEY_WEBHOOK_SECRET", env)
++    if "FLOOZ" in providers and not getattr(settings, "FLOOZ_WEBHOOK_SECRET", ""):
++        logger.warning("ENV=%s missing FLOOZ_WEBHOOK_SECRET", env)
++    if "MTN_MOMO" in providers and not getattr(settings, "MOMO_WEBHOOK_SECRET", ""):
++        logger.warning("ENV=%s missing MOMO_WEBHOOK_SECRET", env)
++    if "THUNES" in providers and not settings.THUNES_WEBHOOK_SECRET:
++        logger.warning("ENV=%s missing THUNES_WEBHOOK_SECRET", env)
+diff --git a/routes/fx.py b/routes/fx.py
+new file mode 100644
+index 0000000..7165ec1
+--- /dev/null
++++ b/routes/fx.py
+@@ -0,0 +1,158 @@
++
++# routes/fx.py
++from fastapi import APIRouter, Depends, Header, HTTPException, Query
++from fastapi.responses import JSONResponse
++from typing import Optional
++from datetime import datetime, timezone
++
++from deps.auth import get_current_user, CurrentUser
++from db import get_conn
++from db_session import set_db_actor
++from db_exec import db_fetchone
++from pydantic import BaseModel, Field
++from services.idempotency import get_idempotency, store_idempotency, request_hash, idempotency_conflict
++from services.metrics import increment_idempotency_replay
++from settings import FX_STATIC_RATES
++
++router = APIRouter(prefix="/v1", tags=["fx"])
++
++
++class FxQuoteRequest(BaseModel):
++    from_currency: str = Field(..., min_length=3, max_length=3)
++    to_currency: str = Field(..., min_length=3, max_length=3)
++    from_amount_cents: int = Field(..., gt=0)
++
++
++class FxQuoteResponse(BaseModel):
++    quote_id: str
++    rate_used: str
++    from_amount_cents: int
++    to_amount_cents: int
++    expires_at: str
++
++
++class FxConvertRequest(BaseModel):
++    quote_id: str
++
++
++class FxConvertResponse(BaseModel):
++    transaction_id: str
++
++
++class FxQuotePublicResponse(BaseModel):
++    from_currency: str
++    to_currency: str
++    rate: float
++    inverse_rate: float
++    amount: float
++    converted_amount: float
++    updated_at: str
++    source: str
++
++
++@router.post("/fx/quote", response_model=FxQuoteResponse)
++def fx_quote(req: FxQuoteRequest, user: CurrentUser = Depends(get_current_user)):
++    with get_conn() as conn:
++        with conn.cursor() as cur:
++            set_db_actor(cur, user.user_id)
++
++        row = db_fetchone(
++            conn,
++            "SELECT * FROM fx.issue_fx_quote_secure(%s::text, %s::text, %s::bigint);",
++            (req.from_currency, req.to_currency, int(req.from_amount_cents)),
++        )
++
++    return FxQuoteResponse(
++        quote_id=str(row[0]),
++        rate_used=str(row[1]),
++        from_amount_cents=int(row[2]),
++        to_amount_cents=int(row[3]),
++        expires_at=row[4].isoformat(),
++    )
++
++
++@router.get("/fx/quote", response_model=FxQuotePublicResponse)
++def fx_quote_public(
++    from_currency: str = Query("USD", min_length=3, max_length=3, alias="from"),
++    to_currency: str = Query(..., min_length=3, max_length=3, alias="to"),
++    amount: float = Query(100.0, gt=0),
++):
++    """
++    Lightweight FX quote endpoint for clients.
++    Returns static rates in dev; replace with provider-backed rates later.
++    """
++    pair = (from_currency.upper(), to_currency.upper())
++    rate = FX_STATIC_RATES.get(pair)
++    if rate is None:
++        raise HTTPException(status_code=400, detail="UNSUPPORTED_FX_PAIR")
++
++    converted_amount = round(amount * rate, 6)
++    updated_at = datetime.now(timezone.utc).isoformat()
++
++    return FxQuotePublicResponse(
++        from_currency=pair[0],
++        to_currency=pair[1],
++        rate=float(rate),
++        inverse_rate=round(1.0 / float(rate), 6),
++        amount=float(amount),
++        converted_amount=converted_amount,
++        updated_at=updated_at,
++        source="static",
++    )
++
++
++@router.post("/fx/convert", response_model=FxConvertResponse)
++def fx_convert(
++    req: FxConvertRequest,
++    user: CurrentUser = Depends(get_current_user),
++    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
++):
++    if not idempotency_key:
++        # Match your existing API behavior
++        from fastapi import HTTPException
++        raise HTTPException(status_code=400, detail="Missing Idempotency-Key header")
++
++    with get_conn() as conn:
++        cached = get_idempotency(
++            conn,
++            user_id=str(user.user_id),
++            idempotency_key=idempotency_key.strip(),
++            route_key="fx_convert",
++        )
++        if cached:
++            req_hash = request_hash(req.model_dump())
++            if cached.get("request_hash") and cached["request_hash"] != req_hash:
++                from fastapi import HTTPException
++                raise HTTPException(status_code=409, detail="IDEMPOTENCY_CONFLICT")
++            increment_idempotency_replay("fx_convert")
++            return JSONResponse(status_code=cached["status_code"], content=cached["response_json"])
++        if idempotency_conflict(
++            conn,
++            user_id=str(user.user_id),
++            idempotency_key=idempotency_key.strip(),
++            route_key="fx_convert",
++        ):
++            from fastapi import HTTPException
++            raise HTTPException(status_code=409, detail="IDEMPOTENCY_CONFLICT")
++
++        with conn.cursor() as cur:
++            set_db_actor(cur, user.user_id)
++
++        row = db_fetchone(
++            conn,
++            "SELECT ledger.post_fx_convert_secure(%s::uuid, %s::text);",
++            (req.quote_id, idempotency_key),
++        )
++
++        resp = {"transaction_id": str(row[0])}
++        store_idempotency(
++            conn,
++            user_id=str(user.user_id),
++            idempotency_key=idempotency_key.strip(),
++            route_key="fx_convert",
++            request_hash_value=request_hash(req.model_dump()),
++            response_json=resp,
++            status_code=200,
++        )
++
++    return FxConvertResponse(transaction_id=str(row[0]))

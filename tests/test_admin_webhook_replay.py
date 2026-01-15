@@ -39,7 +39,7 @@ def test_admin_can_replay_webhook_event(client, admin, user1, wallet1_xof, monke
         json={
             "wallet_id": wallet1_xof,
             "amount_cents": 100,
-            "country": "TG",
+            "country": "BJ",
             "provider_ref": f"cashout-{uuid.uuid4()}",
             "provider": "TMONEY",
             "phone_e164": "+22890009911",

@@ -13,7 +13,7 @@ from pydantic import BaseModel, EmailStr, Field, ConfigDict
 # Shared Types / Enums
 # -----------------------------
 
-CountryCode = Literal["TG", "BJ", "BF", "ML"]
+CountryCode = Literal["TG", "BJ", "BF", "ML", "GH"]
 RoleName = Literal["ADMIN", "SUPPORT", "USER"]
 
 
@@ -68,6 +68,26 @@ class TxnResponse(BaseModel):
     transaction_id: UUID
 
 
+class CashOutQuote(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    send_amount_cents: int
+    fee_cents: int
+    fx_rate: str
+    receive_amount_minor: int
+    corridor: str
+    provider: str
+
+
+class CashOutResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    transaction_id: UUID
+    external_ref: str | None = None
+    fee_cents: int | None = None
+    fx_rate: str | None = None
+    receive_amount_minor: int | None = None
+    corridor: str | None = None
+
+
 class P2PTransferRequest(BaseModel):
     """Current API schema used by /v1/p2p/transfer."""
     model_config = ConfigDict(extra="forbid")
@@ -94,7 +114,7 @@ class CashInRequest(BaseModel):
     wallet_id: UUID
     amount_cents: int = Field(gt=0)
     country: CountryCode
-    provider_ref: str = Field(min_length=3, max_length=100)
+    provider_ref: Optional[str] = Field(default=None, min_length=3, max_length=100)
     provider: MobileMoneyProvider = MobileMoneyProvider.MOMO
     phone_e164: Optional[str] = Field(default=None, pattern=E164_REGEX)
 
@@ -107,7 +127,7 @@ class CashOutRequest(BaseModel):
     wallet_id: UUID
     amount_cents: int = Field(gt=0)
     country: CountryCode
-    provider_ref: str = Field(min_length=3, max_length=100)
+    provider_ref: Optional[str] = Field(default=None, min_length=3, max_length=100)
     provider: MobileMoneyProvider = MobileMoneyProvider.MOMO
     phone_e164: Optional[str] = Field(default=None, pattern=E164_REGEX)
 
@@ -185,6 +205,30 @@ class LedgerIntegrityCheckResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
     mismatches: int
     repaired: bool
+
+
+class WalletInvariantItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    wallet_id: UUID
+    balance_cents: int
+    ledger_cents: int
+    diff_cents: int
+    ok: bool
+    balance_source: str
+
+
+class WalletInvariantResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    ok: bool
+    wallet: WalletInvariantItem
+
+
+class WalletInvariantListResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    ok: bool
+    count: int
+    mismatches: int
+    items: List[WalletInvariantItem]
 
 
 class AdminSetRoleRequest(BaseModel):

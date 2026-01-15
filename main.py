@@ -20,15 +20,23 @@ from routes.auth_google import router as auth_google_router
 from routes.fx import router as fx_router
 from routes.admin_ledger import router as admin_ledger_router
 from routes.admin_roles import router as admin_roles_router
+from routes.admin_reconcile import router as admin_reconcile_router
 from routes.p2p import router as p2p_router
 from routes.admin_mobile_money import router as admin_metrics_router
 from routes.mock_tmoney import router as mock_tmoney_router
 from routes.payouts import router as payouts_router
 from routes.webhooks import router as webhooks_router
 from routes.admin_webhooks import router as admin_webhooks_router
+from routes.admin_support import router as admin_support_router
+from routes.admin_exports import router as admin_exports_router
+from routes.health import router as health_router
+from routes.metrics import router as metrics_router
+from routes.catalog import router as catalog_router
 
 from app.providers.mobile_money.validate import validate_mobile_money_startup
 from app.providers.mobile_money.config import mm_mode, enabled_providers, is_strict_startup_validation
+from settings import validate_env_settings, settings
+from middleware import RequestContextMiddleware, RateLimitMiddleware, SecurityHeadersMiddleware
 
 logger = logging.getLogger("nexapay")
 
@@ -53,15 +61,21 @@ def _parse_csv_env(name: str, default: str = "") -> List[str]:
     return out
 
 
-def _dev_cors_origins() -> List[str]:
+def _cors_origins() -> List[str]:
     """
     Expo web + local dev can run on different ports.
     Keep this permissive in dev, tight in prod.
     Optionally override via CORS_ALLOW_ORIGINS env (comma-separated).
     """
-    env_origins = _parse_csv_env("CORS_ALLOW_ORIGINS", "")
+    env_origins = _parse_csv_env("CORS_ALLOW_ORIGINS", "") or _parse_csv_env(
+        settings.CORS_ALLOW_ORIGINS, ""
+    )
     if env_origins:
         return env_origins
+
+    env = (settings.ENV or "dev").lower()
+    if env == "prod":
+        return []
 
     # Common Expo + local dev origins
     return [
@@ -85,6 +99,8 @@ async def lifespan(app: FastAPI):
     strict = bool(is_strict_startup_validation())
     providers = sorted(enabled_providers() or [])
 
+    validate_env_settings()
+
     logger.info(
         "BOOT NepXy API | MM_MODE=%s | MM_STRICT_STARTUP_VALIDATION=%s | MM_ENABLED_PROVIDERS=%s",
         mode,
@@ -102,10 +118,14 @@ async def lifespan(app: FastAPI):
 def create_app() -> FastAPI:
     app = FastAPI(title="NexaPay API", version="1.0.0", lifespan=lifespan)
 
+    app.add_middleware(RateLimitMiddleware)
+    app.add_middleware(RequestContextMiddleware)
+    app.add_middleware(SecurityHeadersMiddleware)
+
     # CORS (dev)
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=_dev_cors_origins(),
+        allow_origins=_cors_origins(),
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -127,6 +147,12 @@ def create_app() -> FastAPI:
     app.include_router(admin_roles_router)
     app.include_router(admin_metrics_router)
     app.include_router(admin_webhooks_router)
+    app.include_router(admin_support_router)
+    app.include_router(admin_reconcile_router)
+    app.include_router(admin_exports_router)
+    app.include_router(health_router)
+    app.include_router(metrics_router)
+    app.include_router(catalog_router)
 
     # dev-only helpers
     app.include_router(debug_router)

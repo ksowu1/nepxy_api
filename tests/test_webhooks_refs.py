@@ -43,7 +43,7 @@ def _cash_out(client, token: str, wallet_id: str, amount_cents: int, provider: s
     payload = {
         "wallet_id": wallet_id,
         "amount_cents": amount_cents,
-        "country": "TG",
+        "country": "BJ",
         "provider_ref": provider_ref,
         "provider": provider,
         "phone_e164": "+22890009911",

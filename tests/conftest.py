@@ -295,6 +295,7 @@ def admin(admin_user):
 def _clean_payouts_table():
     with get_conn() as conn:
         cur = conn.cursor()
+        cur.execute("ALTER TABLE app.mobile_money_payouts ADD COLUMN IF NOT EXISTS quote jsonb;")
         cur.execute("TRUNCATE app.mobile_money_payouts RESTART IDENTITY CASCADE;")
         conn.commit()
     yield
@@ -315,10 +316,91 @@ def _ensure_webhook_events_table():
               provider_ref text,
               status_raw text,
               payload jsonb NOT NULL,
+              payload_json jsonb,
+              payload_summary jsonb,
               headers jsonb,
-              received_at timestamptz NOT NULL DEFAULT now()
+              received_at timestamptz NOT NULL DEFAULT now(),
+              signature_valid boolean
             );
             """)
+            cur.execute("ALTER TABLE app.webhook_events ADD COLUMN IF NOT EXISTS payload_json jsonb;")
+            cur.execute("ALTER TABLE app.webhook_events ADD COLUMN IF NOT EXISTS payload_summary jsonb;")
+            cur.execute("ALTER TABLE app.webhook_events ADD COLUMN IF NOT EXISTS signature_valid boolean;")
+        conn.commit()
+    yield
+
+
+@pytest.fixture(autouse=True)
+def _ensure_idempotency_table():
+    from db import get_conn
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("CREATE SCHEMA IF NOT EXISTS app;")
+            cur.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto;")
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS app.idempotency_keys (
+                  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+                  user_id uuid NOT NULL,
+                  idempotency_key text NOT NULL,
+                  route_key text NOT NULL,
+                  request_hash text,
+                  response_json jsonb NOT NULL,
+                  status_code integer NOT NULL,
+                  created_at timestamptz NOT NULL DEFAULT now()
+                );
+                """
+            )
+            cur.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS ux_idempotency_keys_user_route
+                ON app.idempotency_keys (user_id, idempotency_key, route_key);
+                """
+            )
+        conn.commit()
+    yield
+
+
+@pytest.fixture(autouse=True)
+def _ensure_audit_log_table():
+    from db import get_conn
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("CREATE SCHEMA IF NOT EXISTS app;")
+            cur.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto;")
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS app.audit_log (
+                  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+                  actor_user_id uuid NOT NULL,
+                  action text NOT NULL,
+                  target_id text,
+                  metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+                  created_at timestamptz NOT NULL DEFAULT now()
+                );
+                """
+            )
+        conn.commit()
+    yield
+
+
+@pytest.fixture(autouse=True)
+def _ensure_country_gh_enum():
+    from db import get_conn
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT 1
+                FROM pg_enum e
+                JOIN pg_type t ON t.oid = e.enumtypid
+                WHERE t.typname = 'country_code'
+                  AND e.enumlabel = 'GH';
+                """
+            )
+            exists = cur.fetchone()
+            if not exists:
+                cur.execute("ALTER TYPE ledger.country_code ADD VALUE 'GH';")
         conn.commit()
     yield
 

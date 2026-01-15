@@ -17,6 +17,7 @@ from app.payouts.repository import (
 )
 from app.providers.base import ProviderResult
 from app.providers.mobile_money.factory import get_provider
+from services.metrics import increment_payout_attempt
 
 SUPPORTED_PROVIDERS = {"TMONEY", "FLOOZ", "MTN", "MTN_MOMO", "THUNES"}
 
@@ -248,6 +249,7 @@ def _handle_pending(conn, p: dict) -> None:
     # SEND (this is the only place attempt_count increments)
     attempt = attempt_count + 1
     res = _normalize_result(provider.send_cashout(p))
+    increment_payout_attempt(provider_name, res.status)
 
     provider_response = res.response
     err = res.error
@@ -455,6 +457,7 @@ def _resend_sent_missing_ref(conn, p: dict, provider) -> None:
 
     attempt = attempt_count + 1
     res = _normalize_result(provider.send_cashout(p))
+    increment_payout_attempt((p.get("provider") or "").strip().upper(), res.status)
 
     provider_response = res.response
     err = res.error

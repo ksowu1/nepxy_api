@@ -7,7 +7,14 @@ from pydantic import BaseModel, EmailStr
 from uuid import UUID
 
 from db import get_conn
-from security import verify_password, create_access_token, hash_password, create_session_refresh_token, validate_refresh_token
+from security import (
+    verify_password,
+    create_access_token,
+    hash_password,
+    create_session_refresh_token,
+    validate_refresh_token,
+    revoke_refresh_token,
+)
 from schemas import RegisterRequest, RegisterResponse
 
 router = APIRouter(prefix="/v1/auth", tags=["auth"])
@@ -31,6 +38,7 @@ class RefreshRequest(BaseModel):
 
 class RefreshResponse(BaseModel):
     access_token: str
+    refresh_token: str
     token_type: str = "bearer"
 
 
@@ -69,7 +77,9 @@ def refresh(body: RefreshRequest):
         raise HTTPException(status_code=401, detail="INVALID_REFRESH_TOKEN")
 
     access = create_access_token(sub=str(user_id))
-    return RefreshResponse(access_token=access)
+    revoke_refresh_token(body.refresh_token)
+    new_refresh = create_session_refresh_token(user_id=user_id)
+    return RefreshResponse(access_token=access, refresh_token=new_refresh)
 
 
 @router.post("/register", response_model=RegisterResponse)

@@ -1,20 +1,16 @@
 
+import logging
 import time
 import uuid
 from fastapi import Request
+from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
-SENSITIVE_HEADERS = {"authorization", "cookie"}
+from rate_limit import allow_token_bucket
+from services.metrics import increment_http_requests
+from settings import settings
 
-def _safe_headers(headers: dict) -> dict:
-    safe = {}
-    for k, v in headers.items():
-        lk = k.lower()
-        if lk in SENSITIVE_HEADERS:
-            safe[k] = "***"
-        else:
-            safe[k] = v
-    return safe
+logger = logging.getLogger("nexapay.http")
 
 class RequestContextMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
@@ -28,18 +24,96 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
         try:
             response = await call_next(request)
             return response
+        except Exception:
+            logger.exception(
+                "http_request error request_id=%s method=%s path=%s",
+                req_id,
+                request.method,
+                request.url.path,
+            )
+            raise
         finally:
             duration_ms = int((time.time() - start) * 1000)
             status = getattr(response, "status_code", 500)
 
-            # minimal structured log line (no PII)
-            print({
-                "event": "http_request",
-                "request_id": req_id,
-                "method": request.method,
-                "path": request.url.path,
-                "status": status,
-                "duration_ms": duration_ms,
-                "client": request.client.host if request.client else None,
-                "headers": _safe_headers(dict(request.headers)),
-            })
+            if response is not None:
+                response.headers["X-Request-Id"] = req_id
+                route_obj = request.scope.get("route")
+                route = getattr(route_obj, "path", request.url.path)
+                increment_http_requests(route, status)
+
+            logger.info(
+                "http_request request_id=%s method=%s path=%s status=%s duration_ms=%s client=%s",
+                req_id,
+                request.method,
+                request.url.path,
+                status,
+                duration_ms,
+                request.client.host if request.client else None,
+            )
+
+
+class RateLimitMiddleware(BaseHTTPMiddleware):
+    def __init__(
+        self,
+        app,
+        *,
+        auth_limit: int = 120,
+        auth_window_seconds: int = 60,
+        webhook_limit: int = 300,
+        webhook_window_seconds: int = 60,
+    ):
+        super().__init__(app)
+        self.auth_limit = int(auth_limit)
+        self.auth_window_seconds = int(auth_window_seconds)
+        self.webhook_limit = int(webhook_limit)
+        self.webhook_window_seconds = int(webhook_window_seconds)
+
+    async def dispatch(self, request: Request, call_next):
+        path = request.url.path or ""
+        group = None
+        if path.startswith("/v1/auth/"):
+            group = "auth"
+            limit = self.auth_limit
+            window = self.auth_window_seconds
+        elif path.startswith("/v1/webhooks/"):
+            group = "webhooks"
+            limit = self.webhook_limit
+            window = self.webhook_window_seconds
+
+        if not group:
+            return await call_next(request)
+
+        client = request.client.host if request.client else "unknown"
+        key = f"{group}:{client}"
+        refill_per_sec = float(limit) / max(1.0, float(window))
+        ok = allow_token_bucket(key, capacity=limit, refill_per_sec=refill_per_sec)
+        if ok:
+            return await call_next(request)
+
+        req_id = getattr(request.state, "request_id", None) or request.headers.get("X-Request-Id") or str(uuid.uuid4())
+        headers = {"X-Request-Id": req_id}
+        return JSONResponse(status_code=429, content={"detail": "RATE_LIMITED"}, headers=headers)
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault("Referrer-Policy", "no-referrer")
+        response.headers.setdefault(
+            "Content-Security-Policy",
+            "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
+        )
+
+        if (settings.ENV or "dev").lower() == "prod":
+            scheme = request.headers.get("x-forwarded-proto", request.url.scheme)
+            if scheme == "https":
+                response.headers.setdefault(
+                    "Strict-Transport-Security",
+                    "max-age=31536000; includeSubDomains",
+                )
+
+        return response

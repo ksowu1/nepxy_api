@@ -1,4 +1,4 @@
-﻿# NepXy PowerShell Cookbook
+# NepXy PowerShell Cookbook
 
 A copy/paste friendly set of PowerShell helpers for local Nepxy API testing:
 login, wallets, activity, cash-in, cash-out, payout status, webhooks, admin ops, and worker metrics.
@@ -62,5 +62,5 @@ Get-PayoutWorkerMetricsPretty -StaleSeconds 60
 ## Notes
 
 - For idempotent endpoints, the cookbook generates a new `Idempotency-Key` automatically.
-- Donâ€™t hardcode passwords in real use. Prefer `$env:NEXA_EMAIL`, `$env:NEXA_PASSWORD`, or `Get-Credential`.
-
+- TMONEY webhooks require `TMONEY_WEBHOOK_SECRET` for the HMAC signature. Set it in your env or pass `-Secret`.
+- Don't hardcode passwords in real use. Prefer `$env:NEXA_EMAIL`, `$env:NEXA_PASSWORD`, or `Get-Credential`.

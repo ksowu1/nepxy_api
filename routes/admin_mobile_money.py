@@ -12,6 +12,8 @@ from pydantic import BaseModel, ConfigDict
 
 from db import get_conn
 from deps.admin import require_admin
+from deps.auth import CurrentUser
+from services.audit_log import write_audit_log
 
 router = APIRouter(prefix="/v1/admin/mobile-money", tags=["admin", "mobile-money"])
 
@@ -50,7 +52,7 @@ def _serialize_payout(row: dict[str, Any]) -> dict[str, Any]:
 
 
 @router.post("/payouts/{transaction_id}/confirmed")
-def admin_mark_payout_confirmed(transaction_id: str, _admin=Depends(require_admin)):
+def admin_mark_payout_confirmed(transaction_id: str, admin: CurrentUser = Depends(require_admin)):
     """
     Admin endpoint to force-confirm a payout.
     Used by tests: test_admin_can_mark_payout_confirmed
@@ -78,6 +80,13 @@ def admin_mark_payout_confirmed(transaction_id: str, _admin=Depends(require_admi
             )
             updated = cur.fetchone()
 
+        write_audit_log(
+            conn,
+            actor_user_id=str(admin.user_id),
+            action="PAYOUT_CONFIRMED",
+            target_id=str(updated[0]),
+            metadata={"status": updated[1]},
+        )
         conn.commit()
 
     return {"ok": True, "transaction_id": updated[0], "status": updated[1]}
@@ -87,7 +96,7 @@ def admin_mark_payout_confirmed(transaction_id: str, _admin=Depends(require_admi
 def admin_retry_payout(
     transaction_id: UUID,
     body: PayoutRetryRequest | None = None,
-    _admin=Depends(require_admin),
+    admin: CurrentUser = Depends(require_admin),
 ):
     req = body or PayoutRetryRequest()
     with get_conn() as conn:
@@ -138,6 +147,13 @@ def admin_retry_payout(
             else:
                 raise HTTPException(status_code=409, detail="NOT_RETRYABLE")
 
+        write_audit_log(
+            conn,
+            actor_user_id=str(admin.user_id),
+            action="PAYOUT_RETRY",
+            target_id=str(transaction_id),
+            metadata={"force": bool(req.force), "reason": req.reason},
+        )
         conn.commit()
 
     return _serialize_retry_summary(row)
@@ -207,36 +223,64 @@ def admin_list_payout_webhook_events(
     limit: int = Query(50, ge=1, le=200),
     _admin=Depends(require_admin),
 ):
-    sql = """
+    payout_sql = """
         SELECT
+          p.provider,
+          tx.external_ref AS external_ref,
+          p.provider_ref AS provider_ref
+        FROM app.mobile_money_payouts p
+        LEFT JOIN ledger.ledger_transactions tx ON tx.id = p.transaction_id
+        WHERE p.transaction_id = %s::uuid
+    """
+    events_sql = """
+        SELECT
+          id::text AS id,
           provider,
           external_ref,
           provider_ref,
           status_raw,
           signature_valid,
-          event_hash,
-          received_at
+          received_at,
+          COALESCE(payload_json, payload) AS payload_json
         FROM app.webhook_events
-        WHERE payout_transaction_id = %s::uuid
+        WHERE provider = %s
+          AND (external_ref = %s OR provider_ref = %s)
         ORDER BY received_at DESC
         LIMIT %s
     """
+
     with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute(sql, (str(transaction_id), limit))
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(payout_sql, (str(transaction_id),))
+            payout = cur.fetchone()
+            if not payout:
+                raise HTTPException(status_code=404, detail="Payout not found")
+
+            payout_external_ref = payout.get("external_ref") or f"ext-{transaction_id}"
+            cur.execute(
+                events_sql,
+                (
+                    payout["provider"],
+                    payout_external_ref,
+                    payout.get("provider_ref"),
+                    limit,
+                ),
+            )
             rows = cur.fetchall() or []
 
     events = []
-    for r in rows:
+    for row in rows:
+        event_external_ref = row["external_ref"] or payout_external_ref
         events.append(
             {
-                "provider": r[0],
-                "signature_valid": r[4],
-                "provider_ref": r[2],
-                "external_ref": r[1],
-                "status_raw": r[3],
-                "event_hash": r[5],
-                "created_at": r[6].isoformat() if r[6] else None,
+                "id": row["id"],
+                "provider": row["provider"],
+                "external_ref": event_external_ref,
+                "provider_ref": row["provider_ref"],
+                "status_raw": row["status_raw"],
+                "signature_valid": row["signature_valid"],
+                "received_at": row["received_at"].isoformat() if row["received_at"] else None,
+                "payload": row["payload_json"],
             }
         )
 

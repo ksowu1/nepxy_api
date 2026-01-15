@@ -53,7 +53,6 @@ def decode_token(token: str) -> Dict[str, Any]:
 # -----------------------
 # Refresh token sessions
 # -----------------------
-REFRESH_DAYS = 30
 
 def _hash_refresh(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
@@ -68,7 +67,7 @@ def create_session_refresh_token(*, user_id: UUID, device_id: Optional[UUID] = N
     """
     raw = create_refresh_token()
     h = _hash_refresh(raw)
-    expires = datetime.now(timezone.utc) + timedelta(days=REFRESH_DAYS)
+    expires = datetime.now(timezone.utc) + timedelta(days=settings.JWT_REFRESH_DAYS)
 
     session_id = uuid4()
     device_id = device_id or uuid4()

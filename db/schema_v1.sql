@@ -32,6 +32,12 @@ CREATE SCHEMA app;
 
 CREATE SCHEMA audit;
 
+--
+-- Name: auth; Type: SCHEMA; Schema: -; Owner: -
+--
+
+CREATE SCHEMA auth;
+
 
 --
 -- Name: kyc; Type: SCHEMA; Schema: -; Owner: -
@@ -67,6 +73,21 @@ CREATE SCHEMA merchants;
 
 CREATE SCHEMA users;
 
+--
+-- Name: rails; Type: SCHEMA; Schema: -; Owner: -
+--
+
+CREATE SCHEMA rails;
+
+--
+-- Name: rail_type; Type: TYPE; Schema: rails; Owner: -
+--
+
+CREATE TYPE rails.rail_type AS ENUM (
+    'INTERNAL',
+    'MOBILE_MONEY'
+);
+
 
 --
 -- Name: country_code; Type: TYPE; Schema: ledger; Owner: -
@@ -76,7 +97,8 @@ CREATE TYPE ledger.country_code AS ENUM (
     'TG',
     'BJ',
     'BF',
-    'ML'
+    'ML',
+    'GH'
 );
 
 
@@ -276,6 +298,25 @@ BEGIN
   ) THEN
     RAISE EXCEPTION 'WALLET_NOT_OWNED' USING ERRCODE='42501';
   END IF;
+END;
+$$;
+
+--
+-- Name: assert_wallet_owned_by_session_user(uuid); Type: FUNCTION; Schema: ledger; Owner: -
+--
+
+CREATE FUNCTION ledger.assert_wallet_owned_by_session_user(p_wallet_id uuid) RETURNS void
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'ledger', 'public'
+    AS $$
+DECLARE
+  v_user_id uuid;
+BEGIN
+  v_user_id := ledger.current_user_id();
+  IF v_user_id IS NULL THEN
+    RAISE EXCEPTION 'UNAUTHORIZED' USING ERRCODE='28000';
+  END IF;
+  PERFORM ledger.assert_wallet_owned_by_user(p_wallet_id, v_user_id);
 END;
 $$;
 
@@ -841,7 +882,87 @@ BEGIN
 EXCEPTION
   WHEN unique_violation THEN
     SELECT id INTO txn_id FROM ledger.ledger_transactions WHERE idempotency_key=p_idempotency_key LIMIT 1;
-    RETURN txn_id;
+  RETURN txn_id;
+END;
+$$;
+
+--
+-- Name: post_cash_in_mobile_money(uuid, uuid, bigint, ledger.country_code, text, text, text, text, uuid); Type: FUNCTION; Schema: ledger; Owner: -
+--
+
+CREATE FUNCTION ledger.post_cash_in_mobile_money(
+    p_user_account_id uuid,
+    p_user_id uuid,
+    p_amount_cents bigint,
+    p_country ledger.country_code,
+    p_idempotency_key text,
+    p_provider_ref text,
+    p_provider text,
+    p_phone_e164 text,
+    p_system_owner_id uuid DEFAULT '00000000-0000-0000-0000-000000000001'::uuid
+) RETURNS uuid
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'ledger', 'public'
+    AS $$
+DECLARE
+  txn_id uuid;
+BEGIN
+  txn_id := ledger.post_cash_in_momo(
+    p_user_account_id,
+    p_user_id,
+    p_amount_cents,
+    p_country,
+    p_idempotency_key,
+    p_provider_ref,
+    p_system_owner_id
+  );
+
+  UPDATE ledger.ledger_transactions
+  SET provider = p_provider,
+      phone_e164 = p_phone_e164
+  WHERE id = txn_id;
+
+  RETURN txn_id;
+END;
+$$;
+
+--
+-- Name: post_cash_out_mobile_money(uuid, uuid, bigint, ledger.country_code, text, text, text, text, uuid); Type: FUNCTION; Schema: ledger; Owner: -
+--
+
+CREATE FUNCTION ledger.post_cash_out_mobile_money(
+    p_user_account_id uuid,
+    p_user_id uuid,
+    p_amount_cents bigint,
+    p_country ledger.country_code,
+    p_idempotency_key text,
+    p_provider_ref text,
+    p_provider text,
+    p_phone_e164 text,
+    p_system_owner_id uuid DEFAULT '00000000-0000-0000-0000-000000000001'::uuid
+) RETURNS uuid
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'ledger', 'public'
+    AS $$
+DECLARE
+  txn_id uuid;
+BEGIN
+  txn_id := ledger.post_cash_out_momo(
+    p_user_account_id,
+    p_user_id,
+    p_amount_cents,
+    p_country,
+    p_idempotency_key,
+    p_provider_ref,
+    p_system_owner_id
+  );
+
+  UPDATE ledger.ledger_transactions
+  SET provider = p_provider,
+      phone_e164 = p_phone_e164
+  WHERE id = txn_id;
+
+  RETURN txn_id;
 END;
 $$;
 
@@ -1234,6 +1355,102 @@ BEGIN
 END;
 $$;
 
+--
+-- Name: register_user_secure(text, text, text, ledger.country_code, text); Type: FUNCTION; Schema: users; Owner: -
+--
+
+CREATE FUNCTION users.register_user_secure(
+    p_email text,
+    p_phone text,
+    p_full_name text,
+    p_country ledger.country_code,
+    p_password_hash text
+) RETURNS uuid
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+  v_user_id uuid;
+  v_wallet_id uuid;
+BEGIN
+  INSERT INTO users.users (
+    email,
+    phone_e164,
+    full_name,
+    country,
+    is_active,
+    created_at,
+    password_hash
+  )
+  VALUES (
+    p_email,
+    p_phone,
+    p_full_name,
+    p_country,
+    TRUE,
+    now(),
+    p_password_hash
+  )
+  RETURNING id INTO v_user_id;
+
+  INSERT INTO ledger.ledger_accounts (
+    owner_type,
+    owner_id,
+    country,
+    currency,
+    account_type,
+    is_active
+  )
+  VALUES (
+    'USER',
+    v_user_id,
+    p_country,
+    'XOF',
+    'WALLET',
+    TRUE
+  )
+  RETURNING id INTO v_wallet_id;
+
+  INSERT INTO ledger.wallet_balances(account_id, available_cents, pending_cents, updated_at)
+  VALUES (v_wallet_id, 0, 0, now())
+  ON CONFLICT (account_id) DO NOTHING;
+
+  RETURN v_user_id;
+EXCEPTION
+  WHEN unique_violation THEN
+    IF EXISTS (SELECT 1 FROM users.users WHERE email = p_email) THEN
+      RAISE EXCEPTION 'DB_ERROR: EMAIL_TAKEN' USING ERRCODE = 'P0001';
+    END IF;
+    IF EXISTS (SELECT 1 FROM users.users WHERE phone_e164 = p_phone) THEN
+      RAISE EXCEPTION 'DB_ERROR: PHONE_TAKEN' USING ERRCODE = 'P0001';
+    END IF;
+    RAISE;
+END;
+$$;
+
+--
+-- Name: is_admin_secure(uuid); Type: FUNCTION; Schema: users; Owner: -
+--
+
+CREATE FUNCTION users.is_admin_secure(p_user_id uuid) RETURNS boolean
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+  v_role text;
+BEGIN
+  IF p_user_id IS NULL THEN
+    RETURN FALSE;
+  END IF;
+  IF p_user_id = '00000000-0000-0000-0000-000000000001'::uuid THEN
+    RETURN TRUE;
+  END IF;
+  SELECT role INTO v_role
+  FROM users.user_roles
+  WHERE user_id = p_user_id
+  LIMIT 1;
+  RETURN upper(coalesce(v_role, '')) = 'ADMIN';
+END;
+$$;
+
 
 SET default_tablespace = '';
 
@@ -1266,6 +1483,30 @@ CREATE TABLE app.users (
     email text NOT NULL,
     password_hash text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+--
+-- Name: mobile_money_payouts; Type: TABLE; Schema: app; Owner: -
+--
+
+CREATE TABLE app.mobile_money_payouts (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    transaction_id uuid NOT NULL,
+    provider text NOT NULL,
+    phone_e164 text,
+    provider_ref text,
+    external_ref text,
+    status text NOT NULL,
+    amount_cents bigint NOT NULL,
+    currency text NOT NULL,
+    last_error text,
+    attempt_count integer DEFAULT 0 NOT NULL,
+    last_attempt_at timestamp with time zone,
+    next_retry_at timestamp with time zone,
+    retryable boolean DEFAULT true NOT NULL,
+    provider_response jsonb,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
 
@@ -1348,6 +1589,17 @@ CREATE TABLE ledger.ledger_entries (
     CONSTRAINT ledger_entries_amount_cents_check CHECK ((amount_cents > 0))
 );
 
+--
+-- Name: wallet_entries; Type: VIEW; Schema: ledger; Owner: -
+--
+
+CREATE VIEW ledger.wallet_entries AS
+SELECT
+    account_id AS wallet_id,
+    transaction_id,
+    created_at
+FROM ledger.ledger_entries;
+
 
 --
 -- Name: ledger_transactions; Type: TABLE; Schema: ledger; Owner: -
@@ -1364,6 +1616,8 @@ CREATE TABLE ledger.ledger_transactions (
     idempotency_key text NOT NULL,
     rail rails.rail_type DEFAULT 'INTERNAL'::rails.rail_type NOT NULL,
     external_ref text,
+    provider text,
+    phone_e164 text,
     created_by uuid,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     posted_at timestamp with time zone,
@@ -1458,6 +1712,33 @@ CREATE TABLE users.users (
     password_hash text
 );
 
+--
+-- Name: user_roles; Type: TABLE; Schema: users; Owner: -
+--
+
+CREATE TABLE users.user_roles (
+    user_id uuid NOT NULL,
+    role text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+--
+-- Name: user_sessions; Type: TABLE; Schema: auth; Owner: -
+--
+
+CREATE TABLE auth.user_sessions (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    user_id uuid NOT NULL,
+    device_id uuid NOT NULL,
+    refresh_token_hash text NOT NULL,
+    biometric_enabled boolean DEFAULT false NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    last_used_at timestamp with time zone,
+    expires_at timestamp with time zone NOT NULL,
+    revoked_at timestamp with time zone
+);
+
 
 --
 -- Name: transaction_meta transaction_meta_pkey; Type: CONSTRAINT; Schema: app; Owner: -
@@ -1481,6 +1762,20 @@ ALTER TABLE ONLY app.users
 
 ALTER TABLE ONLY app.users
     ADD CONSTRAINT users_pkey PRIMARY KEY (id);
+
+--
+-- Name: mobile_money_payouts mobile_money_payouts_pkey; Type: CONSTRAINT; Schema: app; Owner: -
+--
+
+ALTER TABLE ONLY app.mobile_money_payouts
+    ADD CONSTRAINT mobile_money_payouts_pkey PRIMARY KEY (id);
+
+--
+-- Name: mobile_money_payouts mobile_money_payouts_transaction_id_key; Type: CONSTRAINT; Schema: app; Owner: -
+--
+
+ALTER TABLE ONLY app.mobile_money_payouts
+    ADD CONSTRAINT mobile_money_payouts_transaction_id_key UNIQUE (transaction_id);
 
 
 --
@@ -1626,6 +1921,20 @@ ALTER TABLE ONLY users.users
 ALTER TABLE ONLY users.users
     ADD CONSTRAINT users_pkey PRIMARY KEY (id);
 
+--
+-- Name: user_roles user_roles_pkey; Type: CONSTRAINT; Schema: users; Owner: -
+--
+
+ALTER TABLE ONLY users.user_roles
+    ADD CONSTRAINT user_roles_pkey PRIMARY KEY (user_id);
+
+--
+-- Name: user_sessions user_sessions_pkey; Type: CONSTRAINT; Schema: auth; Owner: -
+--
+
+ALTER TABLE ONLY auth.user_sessions
+    ADD CONSTRAINT user_sessions_pkey PRIMARY KEY (id);
+
 
 --
 -- Name: idx_txmeta_receiver; Type: INDEX; Schema: app; Owner: -
@@ -1660,6 +1969,12 @@ CREATE INDEX idx_audit_logs_created_at ON audit.audit_logs USING btree (created_
 --
 
 CREATE INDEX idx_disputes_txn ON audit.disputes USING btree (ledger_transaction_id);
+
+--
+-- Name: ux_user_sessions_refresh_token_hash; Type: INDEX; Schema: auth; Owner: -
+--
+
+CREATE UNIQUE INDEX ux_user_sessions_refresh_token_hash ON auth.user_sessions USING btree (refresh_token_hash);
 
 
 --
@@ -1790,6 +2105,13 @@ ALTER TABLE ONLY audit.disputes
 ALTER TABLE ONLY audit.disputes
     ADD CONSTRAINT disputes_opened_by_user_id_fkey FOREIGN KEY (opened_by_user_id) REFERENCES users.users(id);
 
+--
+-- Name: user_sessions user_sessions_user_id_fkey; Type: FK CONSTRAINT; Schema: auth; Owner: -
+--
+
+ALTER TABLE ONLY auth.user_sessions
+    ADD CONSTRAINT user_sessions_user_id_fkey FOREIGN KEY (user_id) REFERENCES users.users(id);
+
 
 --
 -- Name: kyc_profiles kyc_profiles_user_id_fkey; Type: FK CONSTRAINT; Schema: kyc; Owner: -
@@ -1804,7 +2126,7 @@ ALTER TABLE ONLY kyc.kyc_profiles
 --
 
 ALTER TABLE ONLY ledger.ledger_accounts
-    ADD CONSTRAINT ledger_accounts_merchant_id_fkey FOREIGN KEY (merchant_id) REFERENCES public.merchants(id);
+    ADD CONSTRAINT ledger_accounts_merchant_id_fkey FOREIGN KEY (merchant_id) REFERENCES merchants.merchants(id);
 
 
 --
@@ -1840,6 +2162,69 @@ ALTER TABLE ONLY ledger.wallet_balances
 
 
 --
+-- Name: audit_log; Type: TABLE; Schema: app; Owner: -
+--
+
+CREATE TABLE IF NOT EXISTS app.audit_log (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    actor_user_id uuid NOT NULL,
+    action text NOT NULL,
+    target_id text,
+    metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+    created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_ledger_txn_created_by_type_created_at
+    ON ledger.ledger_transactions (created_by, type, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_mobile_money_payouts_created_at
+    ON app.mobile_money_payouts (created_at);
+
+CREATE INDEX IF NOT EXISTS idx_mobile_money_payouts_phone_created_at
+    ON app.mobile_money_payouts (phone_e164, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS app.webhook_events (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    provider text NOT NULL,
+    external_ref text,
+    provider_ref text,
+    status_raw text,
+    payload jsonb NOT NULL,
+    payload_json jsonb,
+    payload_summary jsonb,
+    headers jsonb,
+    received_at timestamptz NOT NULL DEFAULT now(),
+    signature_valid boolean
+);
+
+--
+-- Name: webhook_events; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE IF NOT EXISTS public.webhook_events (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    provider text NOT NULL,
+    path text NOT NULL,
+    signature text,
+    signature_valid boolean,
+    signature_error text,
+    headers jsonb,
+    body jsonb,
+    body_raw text,
+    provider_ref text,
+    external_ref text,
+    status_raw text,
+    payout_transaction_id text,
+    payout_status_before text,
+    payout_status_after text,
+    update_applied boolean,
+    ignored boolean,
+    ignore_reason text,
+    received_at timestamptz NOT NULL DEFAULT now()
+);
+
+
+--
 -- Name: merchant_qr_codes merchant_qr_codes_merchant_id_fkey; Type: FK CONSTRAINT; Schema: merchants; Owner: -
 --
 
@@ -1861,3 +2246,24 @@ ALTER TABLE ONLY merchants.merchants
 
 \unrestrict M0CO4ow6DDcoG18gcgxTeXNzkBgWIJHJkWC100HLbxmF6phmyXXd0tyM4mVor4N
 
+
+
+--
+-- Name: idempotency_keys; Type: TABLE; Schema: app; Owner: -
+--
+
+CREATE TABLE app.idempotency_keys (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    user_id uuid NOT NULL,
+    idempotency_key text NOT NULL,
+    route_key text NOT NULL,
+    request_hash text,
+    response_json jsonb NOT NULL,
+    status_code integer NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+ALTER TABLE app.idempotency_keys
+    ADD CONSTRAINT idempotency_keys_pkey PRIMARY KEY (id);
+
+CREATE UNIQUE INDEX ux_idempotency_keys_user_route ON app.idempotency_keys USING btree (user_id, idempotency_key, route_key);

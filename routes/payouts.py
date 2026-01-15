@@ -11,6 +11,8 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
 
+from schemas import CashOutQuote
+
 from db import get_conn
 from deps.auth import get_current_user, CurrentUser
 
@@ -39,6 +41,24 @@ class PayoutItem(BaseModel):
 class PayoutListResponse(BaseModel):
     wallet_id: UUID
     payouts: List[PayoutItem]
+
+
+class PayoutDetailResponse(BaseModel):
+    transaction_id: UUID
+    provider: str
+    phone_e164: str
+    provider_ref: Optional[str] = None
+    external_ref: str
+    status: str
+    last_error: Optional[str] = None
+    retryable: bool
+    attempt_count: int
+    amount_cents: int
+    currency: str
+    created_at: str
+    updated_at: str
+    provider_response: Optional[Dict[str, Any]] = None
+    quote: Optional[CashOutQuote] = None
 
 
 def _rollback_quiet(conn) -> None:
@@ -165,6 +185,92 @@ def _discover_entries_table(cur) -> Tuple[str, str]:
     if not row:
         raise HTTPException(status_code=500, detail="LEDGER_ENTRIES_TABLE_NOT_FOUND")
     return str(row[0]), str(row[1])
+
+
+def _wallet_id_for_tx(cur, entry_ref: str, tx_id: UUID) -> UUID:
+    cur.execute(
+        f"SELECT wallet_id FROM {entry_ref} WHERE transaction_id=%s::uuid LIMIT 1;",
+        (str(tx_id),),
+    )
+    row = cur.fetchone()
+    if not row or not row[0]:
+        raise HTTPException(status_code=404, detail="Payout not found")
+    return UUID(str(row[0]))
+
+
+@router.get("/payouts/{transaction_id}", response_model=PayoutDetailResponse)
+def get_payout_by_transaction_id(
+    transaction_id: UUID,
+    response: Response,
+    user: CurrentUser = Depends(get_current_user),
+):
+    response.headers["X-Nepxy-Payouts-Version"] = PAYOUTS_ROUTE_VERSION
+
+    with get_conn() as conn:
+        _rollback_quiet(conn)
+        with conn.cursor() as cur:
+            entry_schema, entry_table = _discover_entries_table(cur)
+            entry_ref = f"{_qident(entry_schema)}.{_qident(entry_table)}"
+
+            wallet_id = _wallet_id_for_tx(cur, entry_ref, transaction_id)
+            _assert_wallet_owned_by_user(cur, conn, wallet_id, user.user_id)
+
+            cur.execute(
+                """
+                SELECT
+                  p.transaction_id,
+                  p.provider,
+                  p.phone_e164,
+                  p.provider_ref,
+                  tx.external_ref,
+                  p.status,
+                  p.last_error,
+                  p.retryable,
+                  p.attempt_count,
+                  p.amount_cents,
+                  p.currency,
+                  p.created_at,
+                  p.updated_at,
+                  p.provider_response,
+                  p.quote
+                FROM app.mobile_money_payouts p
+                LEFT JOIN ledger.ledger_transactions tx ON tx.id = p.transaction_id
+                WHERE p.transaction_id = %s::uuid
+                LIMIT 1;
+                """,
+                (str(transaction_id),),
+            )
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Payout not found")
+
+            provider_response = row[13]
+            if provider_response is not None and not isinstance(provider_response, dict):
+                provider_response = {"raw": provider_response}
+
+            quote = row[14]
+            if quote is not None and not isinstance(quote, dict):
+                quote = {"raw": quote}
+
+            external_ref = row[4] if row[4] else f"ext-{transaction_id}"
+
+            return PayoutDetailResponse(
+                transaction_id=UUID(str(row[0])),
+                provider=str(row[1]),
+                phone_e164=str(row[2]),
+                provider_ref=(str(row[3]) if row[3] else None),
+                external_ref=str(external_ref),
+                status=str(row[5]),
+                last_error=(str(row[6]) if row[6] else None),
+                retryable=bool(row[7]),
+                attempt_count=int(row[8] or 0),
+                amount_cents=int(row[9] or 0),
+                currency=str(row[10] or ""),
+                created_at=str(row[11]),
+                updated_at=str(row[12]),
+                provider_response=provider_response,
+                quote=quote,
+            )
 
 
 @router.get("/wallets/{wallet_id}/payouts", response_model=PayoutListResponse)

@@ -1,6 +1,7 @@
 ﻿
 
 
+
 # ============================
 # Nepxy PowerShell Cookbook
 # login, wallets, activity, cash-in, cash-out, payout status, webhooks, admin ops, worker metrics
@@ -31,6 +32,17 @@ function Set-NepxyToken {
 }
 
 function New-IdempotencyKey { [guid]::NewGuid().ToString() }
+
+function New-HmacSha256Hex {
+  param(
+    [Parameter(Mandatory=$true)][string]$Secret,
+    [Parameter(Mandatory=$true)][string]$Message
+  )
+  $hmac = New-Object System.Security.Cryptography.HMACSHA256 ([Text.Encoding]::UTF8.GetBytes($Secret))
+  $bytes = [Text.Encoding]::UTF8.GetBytes($Message)
+  $hash = $hmac.ComputeHash($bytes)
+  ($hash | ForEach-Object { $_.ToString("x2") }) -join ""
+}
 
 function Invoke-Nepxy {
   <#
@@ -196,13 +208,27 @@ function Get-PayoutStatus {
 # ---- 7) Webhooks (sandbox) ----
 function Send-TmoneyWebhook {
   param(
-    [Parameter(Mandatory=$true)][string]$ProviderRef,
-    [ValidateSet("SUCCESS","FAILED","SENT","PENDING")][string]$Status = "SUCCESS"
+    [string]$ExternalRef,
+    [string]$ProviderRef,
+    [ValidateSet("SUCCESS","FAILED","SENT","PENDING")][string]$Status = "SUCCESS",
+    [string]$Secret = $env:TMONEY_WEBHOOK_SECRET
   )
-  Invoke-Nepxy -Method POST -Path "/v1/webhooks/tmoney" -Token $null -JsonBody @{
-    provider_ref = $ProviderRef
-    status       = $Status
+  if ((-not $ExternalRef) -and (-not $ProviderRef)) {
+    throw "Provide -ExternalRef or -ProviderRef for the webhook payload."
   }
+  if (-not $Secret -or $Secret.Trim() -eq "") {
+    throw "TMONEY webhook secret missing. Set `$env:TMONEY_WEBHOOK_SECRET or pass -Secret."
+  }
+
+  $payload = @{}
+  if ($ExternalRef) { $payload.external_ref = $ExternalRef }
+  if ($ProviderRef) { $payload.provider_ref = $ProviderRef }
+  $payload.status = $Status
+
+  $payloadJson = $payload | ConvertTo-Json -Compress
+  $signature = "sha256=" + (New-HmacSha256Hex -Secret $Secret -Message $payloadJson)
+  $uri = "$($script:NEPXY_BASE)/v1/webhooks/tmoney"
+  Invoke-RestMethod -Method POST -Uri $uri -Headers @{ "X-Signature" = $signature } -ContentType "application/json" -Body $payloadJson
 }
 
 # NOTE: When you add /v1/webhooks/flooz and /v1/webhooks/momo later,
@@ -262,6 +288,7 @@ function Get-PayoutWorkerMetricsPretty {
 # Get-PayoutStatus -TransactionId $tx | Format-List
 # # IMPORTANT: webhook must use the stored provider_ref from payout status:
 # $pref = (Get-PayoutStatus -TransactionId $tx).provider_ref
-# Send-TmoneyWebhook -ProviderRef $pref -Status "SUCCESS"
+# $eref = (Get-PayoutStatus -TransactionId $tx).external_ref
+# Send-TmoneyWebhook -ExternalRef $eref -Status "SUCCESS"
 # Get-PayoutStatus -TransactionId $tx | Format-List
 

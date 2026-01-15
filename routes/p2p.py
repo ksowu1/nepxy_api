@@ -2,6 +2,7 @@
 
 # routes/p2p.py
 from fastapi import APIRouter, Depends, HTTPException, Header
+from fastapi.responses import JSONResponse
 from uuid import UUID
 
 from deps.auth import get_current_user, CurrentUser
@@ -9,6 +10,8 @@ from db import get_conn
 from db_session import set_db_actor
 from schemas import P2PTransferRequest
 from services.db_errors import raise_http_from_db_error
+from services.idempotency import get_idempotency, store_idempotency, request_hash, idempotency_conflict
+from services.metrics import increment_idempotency_replay
 
 router = APIRouter(prefix="/v1", tags=["p2p"])
 
@@ -25,8 +28,30 @@ def p2p_transfer(
     if not idempotency_key or not idempotency_key.strip():
         raise HTTPException(status_code=409, detail="IDEMPOTENCY_CONFLICT")
 
+    route_key = "p2p_transfer"
+    req_hash = request_hash(body.model_dump())
+
     try:
         with get_conn() as conn:
+            cached = get_idempotency(
+                conn,
+                user_id=str(user.user_id),
+                idempotency_key=idempotency_key.strip(),
+                route_key=route_key,
+            )
+            if cached:
+                if cached.get("request_hash") and cached["request_hash"] != req_hash:
+                    raise HTTPException(status_code=409, detail="IDEMPOTENCY_CONFLICT")
+                increment_idempotency_replay(route_key)
+                return JSONResponse(status_code=cached["status_code"], content=cached["response_json"])
+            if idempotency_conflict(
+                conn,
+                user_id=str(user.user_id),
+                idempotency_key=idempotency_key.strip(),
+                route_key=route_key,
+            ):
+                raise HTTPException(status_code=409, detail="IDEMPOTENCY_CONFLICT")
+
             with conn.cursor() as cur:
                 set_db_actor(cur, user.user_id)
 
@@ -65,6 +90,17 @@ def p2p_transfer(
                     ),
                 )
                 tx_id = cur.fetchone()[0]
+
+            resp = {"transaction_id": tx_id}
+            store_idempotency(
+                conn,
+                user_id=str(user.user_id),
+                idempotency_key=idempotency_key.strip(),
+                route_key=route_key,
+                request_hash_value=req_hash,
+                response_json=resp,
+                status_code=200,
+            )
 
         return {"transaction_id": tx_id}
 

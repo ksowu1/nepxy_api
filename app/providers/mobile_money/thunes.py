@@ -61,6 +61,25 @@ class ThunesProvider:
             h["x-simulated-transaction"] = "true"
         return h
 
+    @staticmethod
+    def map_thunes_status(status_raw: str) -> tuple[str, bool, str | None]:
+        """
+        Map Thunes status string -> (internal_status, retryable, last_error).
+        """
+        st = (status_raw or "").strip().upper()
+        if st in ("COMPLETED", "SUCCESS", "SUCCESSFUL", "CONFIRMED", "PAID"):
+            return ("CONFIRMED", False, None)
+
+        if st.startswith("DECLINED") or st.startswith("REJECTED") or st in (
+            "FAILED",
+            "CANCELLED",
+            "CANCELED",
+        ):
+            return ("FAILED", False, st or "THUNES_FAILED")
+
+        # In-flight/unknown => retryable
+        return ("SENT", True, None)
+
     def _payer_id_for_country(self, country2: str) -> Optional[int]:
         c = (country2 or "").strip().upper()
         if c == "TG":
@@ -103,7 +122,8 @@ class ThunesProvider:
                 retryable=False,
             )
 
-        external_id = (payout.get("external_ref") or payout.get("provider_ref") or "").strip()
+        # external_ref is our immutable reference; provider_ref is Thunes transaction id.
+        external_id = (payout.get("external_ref") or "").strip()
         if not external_id:
             external_id = str(payout.get("transaction_id") or "")
 
@@ -315,34 +335,15 @@ class ThunesProvider:
                     retryable=False,
                 )
 
-            thunes_status = str(data.get("status") or "").upper()
+            thunes_status = str(data.get("status") or "")
+            mapped_status, retryable, last_error = self.map_thunes_status(thunes_status)
 
-            # You will refine mapping once you see real status values in your env
-            if thunes_status in ("COMPLETED", "SUCCESS", "SUCCESSFUL", "CONFIRMED", "PAID"):
-                return ProviderResult(
-                    status="CONFIRMED",
-                    provider_ref=provider_ref,
-                    response={"http_status": resp.status_code, "data": data, "request_url": url},
-                    error=None,
-                    retryable=False,
-                )
-
-            if thunes_status.startswith("DECLINED") or thunes_status.startswith("REJECTED") or thunes_status in ("FAILED", "CANCELLED", "CANCELED"):
-                return ProviderResult(
-                    status="FAILED",
-                    provider_ref=provider_ref,
-                    response={"http_status": resp.status_code, "data": data, "request_url": url},
-                    error=thunes_status or "THUNES_FAILED",
-                    retryable=False,
-                )
-
-            # in-flight
             return ProviderResult(
-                status="SENT",
+                status=mapped_status,
                 provider_ref=provider_ref,
                 response={"http_status": resp.status_code, "data": data, "request_url": url},
-                error=None,
-                retryable=True,
+                error=last_error,
+                retryable=retryable,
             )
 
         except requests.RequestException as e:
