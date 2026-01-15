@@ -8,6 +8,7 @@ import os
 import hmac
 import hashlib
 import uuid
+import logging
 from datetime import datetime, timezone
 from typing import Any
 
@@ -20,14 +21,19 @@ from app.payouts.repository import (
     update_status_by_any_ref,
     get_payout_by_any_ref,
 )
+from app.providers.mobile_money.thunes import ThunesProvider
+from settings import settings
 
 # IMPORTANT:
 # This existing function in your repo logs a "detailed" webhook audit record
 # (likely in a different table than app.webhook_events).
 from app.webhooks.repository import insert_webhook_event as insert_webhook_audit_event
+from services.metrics import increment_webhook_event
+from services.redaction import redact_text
 
 
 router = APIRouter(prefix="/v1/webhooks", tags=["webhooks"])
+logger = logging.getLogger("nexapay.webhooks")
 
 
 _ENV_SECRET_BY_PROVIDER = {
@@ -38,7 +44,11 @@ _ENV_SECRET_BY_PROVIDER = {
 }
 
 
-def _map_provider_status(status_raw: str):
+def _map_provider_status(status_raw: str, provider: str | None = None):
+    if (provider or "").strip().upper() == "THUNES":
+        mapped_status, retryable, last_error = ThunesProvider.map_thunes_status(status_raw)
+        return (mapped_status, retryable, last_error, None)
+
     status = (status_raw or "").strip().upper()
 
     if status in ("SUCCESS", "SUCCESSFUL", "CONFIRMED", "COMPLETED"):
@@ -68,6 +78,8 @@ def _extract_refs(payload: dict) -> tuple[str | None, str | None, str]:
         payload.get("provider_ref")
         or payload.get("providerReference")
         or payload.get("reference")
+        or payload.get("transaction_id")
+        or payload.get("id")
         or ""
     )
     provider_ref = str(provider_ref).strip() or None
@@ -75,6 +87,7 @@ def _extract_refs(payload: dict) -> tuple[str | None, str | None, str]:
     external_ref = (
         payload.get("external_ref")
         or payload.get("externalReference")
+        or payload.get("external_id")
         or payload.get("client_ref")
         or payload.get("clientReference")
         or payload.get("merchant_ref")
@@ -87,11 +100,33 @@ def _extract_refs(payload: dict) -> tuple[str | None, str | None, str]:
     return provider_ref, external_ref, status
 
 
+def _payload_summary(
+    payload_obj: dict | None,
+    provider_ref: str | None,
+    external_ref: str | None,
+    status_raw: str,
+) -> dict[str, Any]:
+    if not payload_obj:
+        return {}
+
+    summary = {
+        "event_type": payload_obj.get("event_type") or payload_obj.get("type"),
+        "provider_ref": provider_ref,
+        "external_ref": external_ref,
+        "status": status_raw,
+        "amount": payload_obj.get("amount") or payload_obj.get("amount_cents"),
+    }
+    return {k: v for k, v in summary.items() if v is not None}
+
+
 def _get_secret(provider: str) -> str | None:
     key = _ENV_SECRET_BY_PROVIDER.get(provider.upper())
     if not key:
         return None
-    return os.getenv(key)
+    value = os.getenv(key)
+    if value and value.strip():
+        return value
+    return getattr(settings, key, None)
 
 
 def _verify_signature(*, raw: bytes, signature_header: str | None, secret: str | None) -> tuple[bool, str | None]:
@@ -122,6 +157,7 @@ def _insert_admin_webhook_event(
     external_ref: str | None,
     status_raw: str,
     signature_valid: bool,
+    payload_summary: dict | None,
 ) -> str:
     """
     Inserts into app.webhook_events — the table your /v1/admin/webhooks/events endpoint reads.
@@ -134,9 +170,9 @@ def _insert_admin_webhook_event(
         cur.execute(
             """
             INSERT INTO app.webhook_events
-                (id, provider, external_ref, provider_ref, status_raw, payload, headers, received_at, signature_valid)
+                (id, provider, external_ref, provider_ref, status_raw, payload, payload_json, headers, received_at, signature_valid, payload_summary)
             VALUES
-                (%s::uuid, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s, %s)
+                (%s::uuid, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb, %s, %s, %s::jsonb)
             """,
             (
                 event_id,
@@ -145,9 +181,11 @@ def _insert_admin_webhook_event(
                 provider_ref,
                 status_raw,
                 Json(payload) if payload is not None else Json({}),
+                Json(payload) if payload is not None else Json({}),
                 Json(headers or {}),
                 received_at,
                 bool(signature_valid),
+                Json(payload_summary or {}),
             ),
         )
 
@@ -186,6 +224,7 @@ def _log_both_tables(
         external_ref=external_ref,
         status_raw=status_raw,
         signature_valid=signature_valid,
+        payload_summary=_payload_summary(payload_obj, provider_ref, external_ref, status_raw),
     )
 
     # 2) Your existing detailed audit insert (kept as-is)
@@ -210,13 +249,30 @@ def _log_both_tables(
         ignore_reason=ignore_reason,
     )
 
+    increment_webhook_event(
+        provider=provider,
+        signature_valid=signature_valid,
+        applied=bool(update_applied),
+    )
+
 
 async def _handle_mobile_money_webhook(req: Request, *, provider: str):
     raw = await req.body()
     sig_header = req.headers.get("X-Signature")
 
     secret = _get_secret(provider)
-    sig_ok, sig_err = _verify_signature(raw=raw, signature_header=sig_header, secret=secret)
+    # TODO: Thunes sandbox often lacks signatures; allow unsigned only when explicitly enabled.
+    allow_unsigned = (
+        provider.upper() == "THUNES"
+        and bool(settings.THUNES_ALLOW_UNSIGNED_WEBHOOKS)
+        and (not secret or not sig_header)
+    )
+    unsigned_reason = None
+    if allow_unsigned:
+        sig_ok, sig_err = True, None
+        unsigned_reason = "UNSIGNED_ALLOWED"
+    else:
+        sig_ok, sig_err = _verify_signature(raw=raw, signature_header=sig_header, secret=secret)
 
     # Try parse JSON (even on invalid sig) so we can log refs when possible
     payload_original: dict[str, Any] | None = None
@@ -242,9 +298,23 @@ async def _handle_mobile_money_webhook(req: Request, *, provider: str):
         provider_ref, external_ref, status_raw = _extract_refs(payload_obj)
 
     headers_dict = dict(req.headers)
+    request_id = getattr(req.state, "request_id", None)
+
+    def _log_summary(signature_valid: bool, reason: str | None = None) -> None:
+        logger.info(
+            "webhook_received request_id=%s provider=%s signature_valid=%s provider_ref=%s external_ref=%s status_raw=%s reason=%s",
+            request_id,
+            provider,
+            signature_valid,
+            redact_text(provider_ref or ""),
+            redact_text(external_ref or ""),
+            redact_text(status_raw or ""),
+            reason,
+        )
 
     # If secret missing, log and 500 (deployment misconfig)
     if sig_err == "WEBHOOK_SECRET_NOT_CONFIGURED":
+        _log_summary(False, sig_err)
         with get_conn() as conn:
             _log_both_tables(
                 conn,
@@ -268,6 +338,7 @@ async def _handle_mobile_money_webhook(req: Request, *, provider: str):
 
     # Missing/invalid signature -> log and 401
     if not sig_ok:
+        _log_summary(False, sig_err)
         with get_conn() as conn:
             _log_both_tables(
                 conn,
@@ -291,6 +362,7 @@ async def _handle_mobile_money_webhook(req: Request, *, provider: str):
 
     # From here: signature valid, now enforce valid JSON object
     if payload_obj is None:
+        _log_summary(True, "INVALID_JSON")
         with get_conn() as conn:
             _log_both_tables(
                 conn,
@@ -313,6 +385,7 @@ async def _handle_mobile_money_webhook(req: Request, *, provider: str):
         raise HTTPException(status_code=400, detail={"error": "INVALID_JSON", "body": body_raw_str})
 
     if not isinstance(payload_obj, dict):
+        _log_summary(True, "INVALID_JSON_OBJECT")
         with get_conn() as conn:
             _log_both_tables(
                 conn,
@@ -337,6 +410,7 @@ async def _handle_mobile_money_webhook(req: Request, *, provider: str):
     provider_ref, external_ref, status_raw = _extract_refs(payload_obj)
 
     if not status_raw:
+        _log_summary(True, "MISSING_STATUS")
         with get_conn() as conn:
             _log_both_tables(
                 conn,
@@ -359,6 +433,7 @@ async def _handle_mobile_money_webhook(req: Request, *, provider: str):
         raise HTTPException(status_code=400, detail={"error": "MISSING_STATUS"})
 
     if not provider_ref and not external_ref:
+        _log_summary(True, "MISSING_PROVIDER_REF_OR_EXTERNAL_REF")
         with get_conn() as conn:
             _log_both_tables(
                 conn,
@@ -380,7 +455,7 @@ async def _handle_mobile_money_webhook(req: Request, *, provider: str):
             conn.commit()
         raise HTTPException(status_code=400, detail={"error": "MISSING_PROVIDER_REF_OR_EXTERNAL_REF"})
 
-    new_status, retryable, last_error, next_retry_at = _map_provider_status(status_raw)
+    new_status, retryable, last_error, next_retry_at = _map_provider_status(status_raw, provider=provider)
 
     with get_conn() as conn:
         existing = get_payout_by_any_ref(conn, provider_ref=provider_ref, external_ref=external_ref)
@@ -397,6 +472,7 @@ async def _handle_mobile_money_webhook(req: Request, *, provider: str):
             ignored = True
             ignore_reason = "PAYOUT_NOT_FOUND"
 
+            _log_summary(True, ignore_reason)
             _log_both_tables(
                 conn,
                 provider=provider,
@@ -479,6 +555,7 @@ async def _handle_mobile_money_webhook(req: Request, *, provider: str):
 
         conn.commit()
 
+    _log_summary(True, unsigned_reason)
     resp = {
         "ok": True,
         "provider": provider,
