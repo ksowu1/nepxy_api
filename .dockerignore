@@ -18,3 +18,5 @@ flyctl.zip
 logs/
 .DS_Store
 Thumbs.db
+*.bak
+*.cache
