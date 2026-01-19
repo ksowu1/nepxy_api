@@ -109,11 +109,14 @@ class Settings(BaseSettings):
     # -----------------------
     # MTN MOMO (Disbursement) — sandbox/real
     # -----------------------
+    MOMO_ENV: str = "sandbox"
     MOMO_TARGET_ENV: str = "sandbox"
 
     MOMO_SANDBOX_BASE_URL: str = ""
     MOMO_REAL_BASE_URL: str = ""
 
+    MOMO_API_USER_ID: str = ""
+    MOMO_DISBURSE_SUB_KEY: str = ""
     MOMO_SANDBOX_SUBSCRIPTION_KEY_DISBURSEMENT: str = ""
     MOMO_SANDBOX_API_USER: str = ""
     MOMO_SANDBOX_API_KEY: str = ""

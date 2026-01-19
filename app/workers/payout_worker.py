@@ -19,7 +19,7 @@ from app.providers.base import ProviderResult
 from app.providers.mobile_money.factory import get_provider
 from services.metrics import increment_payout_attempt
 
-SUPPORTED_PROVIDERS = {"TMONEY", "FLOOZ", "MTN", "MTN_MOMO", "THUNES"}
+SUPPORTED_PROVIDERS = {"TMONEY", "FLOOZ", "MTN", "MTN_MOMO", "MOMO", "THUNES"}
 
 MAX_ATTEMPTS = 5
 BASE_BACKOFF_SECONDS = 30

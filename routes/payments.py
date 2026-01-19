@@ -35,6 +35,7 @@ from app.catalog.enablement import (
     is_provider_enabled_for_country,
 )
 from app.providers.mobile_money.factory import get_provider
+from app.providers.mobile_money.config import enabled_providers
 from services.corridors import validate_cash_out_corridor, CURRENCY_RULES
 from services.db_errors import raise_http_from_db_error
 from services.idempotency import get_idempotency, store_idempotency, request_hash, idempotency_conflict
@@ -83,11 +84,32 @@ def _resolve_delivery_method(
     return method
 
 
-def _choose_provider_from_list(providers: list[str]) -> str | None:
+def _choose_provider_from_list(providers: list[str], *, prefer_thunes: bool = True) -> str | None:
     normalized = [_normalize(provider) for provider in providers if provider]
-    if "THUNES" in normalized:
+    if prefer_thunes and "THUNES" in normalized:
         return "THUNES"
     return normalized[0] if normalized else None
+
+
+def _providers_for_destination(
+    *,
+    country: str,
+    destination: dict[str, object],
+) -> list[str]:
+    providers_by_method = destination.get("providers_per_method") or {}
+    base = providers_by_method.get(DELIVERY_METHOD_MOBILE_MONEY) or []
+    normalized = [_canonical_provider_code(p) for p in base if p]
+    enabled = {_canonical_provider_code(p) for p in enabled_providers()}
+    if enabled:
+        normalized = [p for p in normalized if p in enabled]
+    if country.upper() == "GH":
+        if "MOMO" in enabled and "MOMO" in normalized:
+            normalized = ["MOMO"] + [p for p in normalized if p != "MOMO"]
+        elif "MOMO" in enabled:
+            normalized.insert(0, "MOMO")
+        elif "THUNES" in enabled and "THUNES" not in normalized:
+            normalized.insert(0, "THUNES")
+    return normalized
 
 
 def _resolve_provider(
@@ -95,16 +117,28 @@ def _resolve_provider(
     country: str,
     method: str,
     destination: dict[str, object] | None,
+    providers_for_method: list[str] | None = None,
 ) -> str:
     provider = _canonical_provider_code(body.provider.value if body.provider else None)
     if provider:
         return provider
     if method != DELIVERY_METHOD_MOBILE_MONEY:
         raise HTTPException(status_code=400, detail="PROVIDER_REQUIRED")
+    if providers_for_method is not None:
+        chosen = _choose_provider_from_list(
+            list(providers_for_method),
+            prefer_thunes=country.upper() != "GH",
+        )
+        if not chosen:
+            raise HTTPException(status_code=400, detail="NO_AVAILABLE_PROVIDER")
+        return _canonical_provider_code(chosen)
     if destination:
         providers_by_method = destination.get("providers_per_method") or {}
         providers = providers_by_method.get(DELIVERY_METHOD_MOBILE_MONEY) or []
-        chosen = _choose_provider_from_list(list(providers))
+        chosen = _choose_provider_from_list(
+            list(providers),
+            prefer_thunes=country.upper() != "GH",
+        )
         if not chosen:
             raise HTTPException(status_code=400, detail="NO_AVAILABLE_PROVIDER")
         return _canonical_provider_code(chosen)
@@ -141,6 +175,10 @@ def payout_quote(body: PayoutQuoteRequest):
 
     available_methods = list(destination.get("delivery_methods") or [])
     providers_per_method = destination.get("providers_per_method") or {}
+    if DELIVERY_METHOD_MOBILE_MONEY in providers_per_method:
+        providers = _providers_for_destination(country=country, destination=destination)
+        providers_per_method = dict(providers_per_method)
+        providers_per_method[DELIVERY_METHOD_MOBILE_MONEY] = providers
     recommended_method = None
     if DELIVERY_METHOD_MOBILE_MONEY in available_methods:
         recommended_method = DELIVERY_METHOD_MOBILE_MONEY
@@ -328,8 +366,7 @@ def cash_out_mobile_money(
     if destination_requested:
         if not destination:
             raise HTTPException(status_code=400, detail="DESTINATION_NOT_FOUND")
-        providers_by_method = destination.get("providers_per_method") or {}
-        providers_for_method = providers_by_method.get(DELIVERY_METHOD_MOBILE_MONEY) or []
+        providers_for_method = _providers_for_destination(country=country, destination=destination)
         if DELIVERY_METHOD_MOBILE_MONEY not in (destination.get("delivery_methods") or []):
             raise HTTPException(status_code=400, detail="DELIVERY_METHOD_UNAVAILABLE")
         if destination.get("status") != "AVAILABLE":
@@ -346,7 +383,13 @@ def cash_out_mobile_money(
             raise HTTPException(status_code=400, detail=DESTINATION_COMING_SOON)
 
     method = _resolve_delivery_method(body, destination)
-    provider_code = _resolve_provider(body, country, method, destination if destination_requested else None)
+    provider_code = _resolve_provider(
+        body,
+        country,
+        method,
+        destination if destination_requested else None,
+        providers_for_method if destination_requested else None,
+    )
     if not is_provider_enabled_for_country(country, provider_code):
         raise HTTPException(status_code=400, detail=PROVIDER_DISABLED)
 

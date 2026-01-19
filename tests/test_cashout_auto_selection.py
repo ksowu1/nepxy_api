@@ -1,10 +1,12 @@
 import uuid
 
 from db import get_conn
+from settings import settings
 from tests.conftest import _auth_headers
 
 
-def test_cash_out_auto_selects_provider_from_destination_country(client, user2, funded_wallet2_xof):
+def test_cash_out_auto_selects_provider_from_destination_country(client, user2, funded_wallet2_xof, monkeypatch):
+    monkeypatch.setattr(settings, "MM_ENABLED_PROVIDERS", "MOMO,THUNES")
     idem = f"pytest-auto-provider-{uuid.uuid4()}"
     payload = {
         "wallet_id": funded_wallet2_xof,

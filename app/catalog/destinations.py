@@ -20,8 +20,8 @@ STATUS_COMING_SOON = "COMING_SOON"
 AVAILABLE_COUNTRIES = {"GH", "BJ"}
 
 PROVIDERS_BY_COUNTRY: dict[str, list[str]] = {
-    "GH": ["MTN_MOMO"],
-    "BJ": ["MTN_MOMO", "TMONEY", "FLOOZ"],
+    "GH": ["MOMO"],
+    "BJ": ["MOMO", "TMONEY", "FLOOZ"],
     "TG": ["TMONEY", "FLOOZ", "THUNES"],
 }
 

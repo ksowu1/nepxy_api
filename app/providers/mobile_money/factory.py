@@ -29,7 +29,11 @@ def get_provider(name: str):
         from app.providers.mobile_money.flooz import FloozProvider
         provider = FloozProvider()
 
-    elif key in ("MTN", "MOMO", "MTN_MOMO"):
+    elif key == "MOMO":
+        from services.providers.momo import MomoProvider
+        provider = MomoProvider()
+
+    elif key in ("MTN", "MTN_MOMO"):
         from app.providers.mobile_money.mtn_momo import MtnMomoProvider
         provider = MtnMomoProvider()
 

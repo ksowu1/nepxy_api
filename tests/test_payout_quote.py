@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 
 from app.catalog import destinations as catalog_destinations
 from app.catalog import enablement as catalog_enablement
+from settings import settings
 from services import corridors as corridors
 from tests.conftest import _auth_headers, AuthedUser
 
@@ -22,6 +23,17 @@ def test_payout_quote_returns_methods_and_providers_for_gh(client: TestClient):
     assert providers, "Expected providers for MOBILE_MONEY_PAYOUT"
 
 
+def test_quote_gh_recommends_momo_when_enabled(client: TestClient, monkeypatch):
+    monkeypatch.setattr(settings, "MM_ENABLED_PROVIDERS", "MOMO,THUNES")
+    payload = {"destination_country": "GH", "amount_cents": 1000}
+    r = client.post("/v1/quotes/payout", json=payload)
+    assert r.status_code == 200, r.text
+    data = r.json()
+    providers = data["providers_per_method"].get("MOBILE_MONEY_PAYOUT") or []
+    assert providers, "Expected providers for MOBILE_MONEY_PAYOUT"
+    assert providers[0] == "MOMO"
+
+
 def test_payout_quote_coming_soon_has_note(client: TestClient):
     payload = {"destination_country": "TG", "amount_cents": 1000}
     r = client.post("/v1/quotes/payout", json=payload)
@@ -32,8 +44,9 @@ def test_payout_quote_coming_soon_has_note(client: TestClient):
 
 
 def test_cash_out_with_destination_country_selects_provider(
-    client: TestClient, user2: AuthedUser, funded_wallet2_xof: str
+    client: TestClient, user2: AuthedUser, funded_wallet2_xof: str, monkeypatch
 ):
+    monkeypatch.setattr(settings, "MM_ENABLED_PROVIDERS", "MOMO,THUNES")
     provider_ref = f"dest-country-{uuid.uuid4()}"
     payload = {
         "wallet_id": funded_wallet2_xof,
@@ -57,7 +70,34 @@ def test_cash_out_with_destination_country_selects_provider(
     assert payout_json.get("provider") == "MOMO"
 
 
-def test_cash_out_autopicks_thunes_when_available(
+def test_cashout_gh_omitted_provider_picks_momo(
+    client: TestClient, user2: AuthedUser, funded_wallet2_xof: str, monkeypatch
+):
+    monkeypatch.setattr(settings, "MM_ENABLED_PROVIDERS", "MOMO,THUNES")
+    provider_ref = f"dest-momo-omitted-{uuid.uuid4()}"
+    payload = {
+        "wallet_id": funded_wallet2_xof,
+        "amount_cents": 150,
+        "destination_country": "GH",
+        "provider_ref": provider_ref,
+        "phone_e164": "+233201234567",
+    }
+    r = client.post(
+        "/v1/cash-out/mobile-money",
+        json=payload,
+        headers=_auth_headers(user2.token, idem=provider_ref),
+    )
+    assert r.status_code in (200, 201), r.text
+    tx_id = r.json().get("transaction_id")
+    assert tx_id
+
+    payout = client.get(f"/v1/payouts/{tx_id}", headers=_auth_headers(user2.token))
+    assert payout.status_code == 200, payout.text
+    payout_json = payout.json()
+    assert payout_json.get("provider") == "MOMO"
+
+
+def test_cashout_gh_falls_back_to_thunes_when_momo_disabled(
     client: TestClient, user2: AuthedUser, funded_wallet2_xof: str, monkeypatch
 ):
     base = catalog_destinations.build_destination("GH")
@@ -67,8 +107,9 @@ def test_cash_out_autopicks_thunes_when_available(
     patched = dict(base)
     patched["providers_per_method"] = providers
     monkeypatch.setitem(catalog_destinations.DESTINATIONS, "GH", patched)
-    monkeypatch.setitem(catalog_enablement.ENABLED_PROVIDERS_BY_COUNTRY, "GH", ["MOMO", "THUNES"])
-    monkeypatch.setitem(corridors.ALLOWED_PAYOUT_PROVIDERS, "GH", {"MOMO", "THUNES"})
+    monkeypatch.setitem(catalog_enablement.ENABLED_PROVIDERS_BY_COUNTRY, "GH", ["THUNES"])
+    monkeypatch.setitem(corridors.ALLOWED_PAYOUT_PROVIDERS, "GH", {"THUNES"})
+    monkeypatch.setattr(settings, "MM_ENABLED_PROVIDERS", "THUNES")
 
     provider_ref = f"dest-thunes-{uuid.uuid4()}"
     payload = {
@@ -93,9 +134,10 @@ def test_cash_out_autopicks_thunes_when_available(
     assert payout_json.get("provider") == "THUNES"
 
 
-def test_cash_out_picks_first_provider_when_thunes_missing(
+def test_cash_out_prefers_momo_over_first_provider_when_thunes_missing(
     client: TestClient, user2: AuthedUser, funded_wallet2_xof: str, monkeypatch
 ):
+    monkeypatch.setattr(settings, "MM_ENABLED_PROVIDERS", "TMONEY,MOMO")
     base = catalog_destinations.build_destination("GH")
     assert base, "Expected GH destination"
     providers = dict(base.get("providers_per_method") or {})
@@ -126,7 +168,7 @@ def test_cash_out_picks_first_provider_when_thunes_missing(
     payout = client.get(f"/v1/payouts/{tx_id}", headers=_auth_headers(user2.token))
     assert payout.status_code == 200, payout.text
     payout_json = payout.json()
-    assert payout_json.get("provider") == "TMONEY"
+    assert payout_json.get("provider") == "MOMO"
 
 
 def test_cash_out_rejects_provider_not_in_country_list(

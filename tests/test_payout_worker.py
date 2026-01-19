@@ -205,6 +205,40 @@ def test_worker_recovers_stale_sent(monkeypatch):
     assert attempts >= 1
 
 
+def test_worker_momo_status_successful_transitions(monkeypatch):
+    monkeypatch.setenv("MOMO_ENV", "sandbox")
+    monkeypatch.setenv("MOMO_API_USER_ID", "user-123")
+    monkeypatch.setenv("MOMO_API_KEY", "key-123")
+    monkeypatch.setenv("MOMO_DISBURSE_SUB_KEY", "sub-123")
+    from app.providers.mobile_money import factory
+    factory._PROVIDER_CACHE.clear()
+
+    def fake_post(url, headers=None, auth=None, json=None):
+        assert url.endswith("/disbursement/token/")
+        return SimpleNamespace(status_code=200, json=lambda: {"access_token": "token-123", "expires_in": 3600})
+
+    def fake_get(url, headers=None):
+        assert url.endswith("/disbursement/v1_0/transfer/pytest-momo-ref")
+        return SimpleNamespace(status_code=200, json=lambda: {"status": "SUCCESSFUL"})
+
+    monkeypatch.setattr("services.providers.momo.requests.post", fake_post)
+    monkeypatch.setattr("services.providers.momo.requests.get", fake_get)
+
+    payout_id = _insert_payout(
+        provider="MOMO",
+        status="SENT",
+        phone_e164="+233200000000",
+        provider_ref="pytest-momo-ref",
+    )
+
+    payout_worker.process_once(batch_size=500, stale_seconds=0)
+
+    status, attempts, provider_ref, last_error = _get_status(payout_id)
+    assert status == "CONFIRMED"
+    assert provider_ref == "pytest-momo-ref"
+    assert last_error is None
+
+
 def test_worker_schedules_retry_then_fails_after_max_attempts(monkeypatch):
     # Provider always fails
     monkeypatch.setattr(

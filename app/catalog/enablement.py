@@ -5,7 +5,7 @@ from schemas import MobileMoneyProvider
 ENABLED_DESTINATIONS: list[str] = ["GH", "BJ"]
 
 ENABLED_PROVIDERS_BY_COUNTRY: dict[str, list[str]] = {
-    "GH": ["MOMO"],
+    "GH": ["MOMO", "THUNES"],
     "BJ": ["MOMO", "TMONEY", "FLOOZ"],
 }
 
