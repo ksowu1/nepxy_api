@@ -8,12 +8,13 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from psycopg2.extras import RealDictCursor
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from db import get_conn
 from deps.admin import require_admin
 from deps.auth import CurrentUser
 from services.audit_log import write_audit_log
+from app.workers import payout_worker
 
 router = APIRouter(prefix="/v1/admin/mobile-money", tags=["admin", "mobile-money"])
 
@@ -21,6 +22,12 @@ class PayoutRetryRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     force: bool = False
     reason: str | None = None
+
+
+class PayoutProcessOnceRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    batch_size: int = Field(default=50, ge=1, le=500)
+    stale_seconds: int = Field(default=payout_worker.DEFAULT_STALE_SECONDS, ge=0, le=3600)
 
 
 def _serialize_retry_summary(row: dict[str, Any]) -> dict[str, Any]:
@@ -157,6 +164,19 @@ def admin_retry_payout(
         conn.commit()
 
     return _serialize_retry_summary(row)
+
+
+@router.post("/payouts/process-once")
+def admin_process_payouts_once(
+    body: PayoutProcessOnceRequest | None = None,
+    _admin=Depends(require_admin),
+):
+    req = body or PayoutProcessOnceRequest()
+    processed = payout_worker.process_once(
+        batch_size=req.batch_size,
+        stale_seconds=req.stale_seconds,
+    )
+    return {"processed": processed}
 
 
 @router.get("/payouts")

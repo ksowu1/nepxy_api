@@ -9,6 +9,8 @@ from typing import Any, Optional
 import time
 import uuid
 
+import logging
+
 from db import get_conn
 from app.payouts.repository import (
     update_status,
@@ -20,6 +22,8 @@ from app.providers.mobile_money.factory import get_provider
 from services.metrics import increment_payout_attempt
 
 SUPPORTED_PROVIDERS = {"TMONEY", "FLOOZ", "MTN", "MTN_MOMO", "MOMO", "THUNES"}
+
+logger = logging.getLogger("nexapay")
 
 MAX_ATTEMPTS = 5
 BASE_BACKOFF_SECONDS = 30
@@ -251,6 +255,13 @@ def _handle_pending(conn, p: dict) -> None:
         provider_ref = p.get("provider_ref")
         provider_response = res.response
         err = res.error
+        logger.info(
+            "momo payout poll payout_id=%s provider_ref=%s status=%s error=%s",
+            payout_id,
+            provider_ref,
+            res.status,
+            err,
+        )
 
         if res.status == "CONFIRMED":
             update_status(
@@ -300,6 +311,14 @@ def _handle_pending(conn, p: dict) -> None:
     attempt = attempt_count + 1
     res = _normalize_result(provider.send_cashout(p))
     increment_payout_attempt(provider_name, res.status)
+    if provider_name == "MOMO":
+        logger.info(
+            "momo payout send payout_id=%s status=%s provider_ref=%s error=%s",
+            payout_id,
+            res.status,
+            res.provider_ref,
+            res.error,
+        )
 
     provider_response = res.response
     err = res.error

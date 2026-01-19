@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import time
 import uuid
@@ -12,6 +13,7 @@ from app.providers.base import ProviderResult
 
 BASE_URL = "https://sandbox.momodeveloper.mtn.com"
 TOKEN_SAFETY_BUFFER_S = 60
+logger = logging.getLogger("nexapay")
 
 
 class MomoProvider:
@@ -165,8 +167,15 @@ class MomoProvider:
         }
 
         try:
-            return requests.post(url, headers=headers, json=body)
+            resp = requests.post(url, headers=headers, json=body)
+            logger.info(
+                "momo transfer create status=%s reference_id=%s",
+                resp.status_code,
+                reference_id,
+            )
+            return resp
         except Exception as exc:
+            logger.warning("momo transfer create error reference_id=%s err=%s", reference_id, exc)
             return ProviderResult(status="FAILED", provider_ref=reference_id, error=str(exc), retryable=True)
 
     def get_transfer_status(self, reference_id: str):
@@ -182,8 +191,15 @@ class MomoProvider:
         }
 
         try:
-            return requests.get(url, headers=headers)
+            resp = requests.get(url, headers=headers)
+            logger.info(
+                "momo transfer status status=%s reference_id=%s",
+                resp.status_code,
+                reference_id,
+            )
+            return resp
         except Exception as exc:
+            logger.warning("momo transfer status error reference_id=%s err=%s", reference_id, exc)
             return ProviderResult(status="SENT", provider_ref=reference_id, error=str(exc), retryable=True)
 
     def get_token(self) -> str | None:

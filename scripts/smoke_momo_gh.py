@@ -105,6 +105,21 @@ def _retry_payout(base_url, admin_token, tx_id):
     return False
 
 
+def _process_payouts_once(base_url, admin_token):
+    resp = request(
+        "POST",
+        base_url + "/v1/admin/mobile-money/payouts/process-once",
+        headers=auth_headers(admin_token),
+        json_body={"batch_size": 100, "stale_seconds": 0},
+        allow_failure=True,
+    )
+    if resp.status_code in (200, 201):
+        return True
+    detail = _safe_json(resp).get("detail") or resp.text
+    print("Admin process-once failed (%s): %s" % (resp.status_code, detail))
+    return False
+
+
 def main():
     base_url = os.getenv("BASE_URL", "http://127.0.0.1:8001")
     _configure_session()
@@ -169,6 +184,8 @@ def main():
         admin_token, _ = _login(base_url, admin_email, admin_password)
         step("Trigger payout retry")
         _retry_payout(base_url, admin_token, tx_id)
+        step("Trigger payout worker tick")
+        _process_payouts_once(base_url, admin_token)
     else:
         print("Skipping admin retry; ADMIN_EMAIL/ADMIN_PASSWORD not set.")
 
