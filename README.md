@@ -67,6 +67,12 @@ $env:TMONEY_WEBHOOK_SECRET="dev_secret_tmoney"
 python scripts/smoke_dev.py
 ```
 
+\## Docker: required env vars for smoke test
+
+- `docker compose` injects the local `.env` into the `app` (and `reconcile`) services via `env_file`, so populate that file with the keys below instead of passing them every run on the CLI.
+- Ensure `.env` defines `USER_EMAIL`, `USER_PASSWORD`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`, and `TMONEY_WEBHOOK_SECRET` so the smoke test command works out of the box.
+- `.env.example` already lists placeholders for those values; copy it to `.env` and customize before running the smoke test.
+
 \## Secrets
 
 \- Never commit secrets or production credentials to Git. `.env` is already ignored.

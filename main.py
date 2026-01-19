@@ -8,7 +8,7 @@ import os
 from contextlib import asynccontextmanager
 from typing import List
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -36,7 +36,12 @@ from routes.catalog import router as catalog_router
 from app.providers.mobile_money.validate import validate_mobile_money_startup
 from app.providers.mobile_money.config import mm_mode, enabled_providers, is_strict_startup_validation
 from settings import validate_env_settings, settings
-from middleware import RequestContextMiddleware, RateLimitMiddleware, SecurityHeadersMiddleware
+from middleware import (
+    RequestContextMiddleware,
+    RateLimitMiddleware,
+    SecurityHeadersMiddleware,
+    StagingGateMiddleware,
+)
 
 logger = logging.getLogger("nexapay")
 
@@ -118,6 +123,7 @@ async def lifespan(app: FastAPI):
 def create_app() -> FastAPI:
     app = FastAPI(title="NexaPay API", version="1.0.0", lifespan=lifespan)
 
+    app.add_middleware(StagingGateMiddleware)
     app.add_middleware(RateLimitMiddleware)
     app.add_middleware(RequestContextMiddleware)
     app.add_middleware(SecurityHeadersMiddleware)
@@ -160,6 +166,9 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(Exception)
     async def unhandled_error_handler(request: Request, exc: Exception):
+        if isinstance(exc, HTTPException):
+            headers = getattr(exc, "headers", None) or {}
+            return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail}, headers=headers)
         logger.exception("Unhandled error: %s %s", request.method, request.url.path)
         return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 

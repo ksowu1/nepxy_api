@@ -2,12 +2,14 @@
 
 # db.py
 import psycopg2
-from psycopg2.pool import SimpleConnectionPool
+from psycopg2.pool import ThreadedConnectionPool
 from contextlib import contextmanager
 from settings import settings
 import psycopg2.extras
+import threading
 
-_pool: SimpleConnectionPool | None = None
+_pool: ThreadedConnectionPool | None = None
+_pool_lock = threading.Lock()
 
 
 def init_pool():
@@ -18,12 +20,14 @@ def init_pool():
     psycopg2.extras.register_uuid()
     global _pool
     if _pool is None:
-        _pool = SimpleConnectionPool(
-            minconn=1,
-            maxconn=10,
-            dsn=settings.DATABASE_URL,
-            connect_timeout=5,
-        )
+        with _pool_lock:
+            if _pool is None:
+                _pool = ThreadedConnectionPool(
+                    minconn=1,
+                    maxconn=10,
+                    dsn=settings.DATABASE_URL,
+                    connect_timeout=5,
+                )
 
 
 def close_pool():

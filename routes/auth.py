@@ -16,6 +16,7 @@ from security import (
     revoke_refresh_token,
 )
 from schemas import RegisterRequest, RegisterResponse
+from services.invite_only import is_email_allowed, is_invite_only_enabled
 
 router = APIRouter(prefix="/v1/auth", tags=["auth"])
 
@@ -42,8 +43,17 @@ class RefreshResponse(BaseModel):
     token_type: str = "bearer"
 
 
+def _enforce_invite_only(email: str) -> None:
+    if not is_invite_only_enabled():
+        return
+    if not is_email_allowed(email):
+        raise HTTPException(status_code=403, detail="INVITE_ONLY_EMAIL_NOT_ALLOWED")
+
+
 @router.post("/login", response_model=LoginResponse)
 def login(body: LoginRequest):
+    _enforce_invite_only(body.email)
+
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -84,6 +94,8 @@ def refresh(body: RefreshRequest):
 
 @router.post("/register", response_model=RegisterResponse)
 def register(payload: RegisterRequest):
+    _enforce_invite_only(payload.email)
+
     pw_hash = hash_password(payload.password)
     full_name = payload.full_name or None
 

@@ -3,30 +3,126 @@
 # app/providers/mobile_money/mtn_momo.py
 from __future__ import annotations
 
-import base64
-import time
-from typing import Optional
-
-import httpx
+import os
+from dataclasses import dataclass
+from typing import Optional, Any
 
 from app.providers.base import ProviderResult, MobileMoneyProvider
-from app.providers.mobile_money.config import momo_config
-from app.providers.mobile_money.http import HttpClient, is_retryable_http
+from app.providers.mobile_money.config import mm_mode, momo_config
 from settings import settings
 
 
+@dataclass(frozen=True)
+class MomoCountryConfig:
+    country: str
+    mode: str
+    base_url: str
+    target_env: str
+    subscription_key: str
+    api_user: str
+    api_key: str
+    callback_url: str
+    webhook_secret: str
+    token_url: str
+    transfer_url: str
+    status_url_template: str
+    missing: list[str]
+
+
+def _normalize(value: str | None) -> str:
+    return (value or "").strip().upper()
+
+
+def _country_env(country: str, key: str) -> str:
+    name = f"MOMO_{country}_{key}"
+    return (os.getenv(name) or "").strip()
+
+
+def _fallback_momo_config(mode: str) -> dict[str, str]:
+    cfg = momo_config()
+    if mode == "real":
+        return {
+            "base_url": (settings.MOMO_REAL_BASE_URL or settings.MOMO_BASE_URL or "").strip(),
+            "subscription_key": (settings.MOMO_REAL_SUBSCRIPTION_KEY_DISBURSEMENT or settings.MOMO_SUBSCRIPTION_KEY_DISBURSEMENT or "").strip(),
+            "api_user": (settings.MOMO_REAL_API_USER or settings.MOMO_API_USER or "").strip(),
+            "api_key": (settings.MOMO_REAL_API_KEY or settings.MOMO_API_KEY or "").strip(),
+            "target_env": (settings.MOMO_TARGET_ENV or "production").strip(),
+        }
+    return {
+        "base_url": (settings.MOMO_SANDBOX_BASE_URL or settings.MOMO_BASE_URL or "").strip(),
+        "subscription_key": (settings.MOMO_SANDBOX_SUBSCRIPTION_KEY_DISBURSEMENT or settings.MOMO_SUBSCRIPTION_KEY_DISBURSEMENT or "").strip(),
+        "api_user": (settings.MOMO_SANDBOX_API_USER or settings.MOMO_API_USER or "").strip(),
+        "api_key": (settings.MOMO_SANDBOX_API_KEY or settings.MOMO_API_KEY or "").strip(),
+        "target_env": (settings.MOMO_TARGET_ENV or "sandbox").strip(),
+    }
+
+
+def _momo_country_config(country: str) -> MomoCountryConfig:
+    mode = mm_mode()
+    normalized = _normalize(country)
+    suffix = "REAL" if mode == "real" else "SANDBOX"
+    fallback = _fallback_momo_config(mode)
+
+    base_url = _country_env(normalized, f"{suffix}_BASE_URL") or fallback["base_url"]
+    subscription_key = _country_env(normalized, f"{suffix}_SUBSCRIPTION_KEY_DISBURSEMENT") or fallback["subscription_key"]
+    api_user = _country_env(normalized, f"{suffix}_API_USER") or fallback["api_user"]
+    api_key = _country_env(normalized, f"{suffix}_API_KEY") or fallback["api_key"]
+    target_env = _country_env(normalized, "TARGET_ENV") or fallback["target_env"]
+    callback_url = _country_env(normalized, "CALLBACK_URL") or (settings.MOMO_CALLBACK_URL or "").strip()
+    webhook_secret = _country_env(normalized, "WEBHOOK_SECRET") or (settings.MOMO_WEBHOOK_SECRET or "").strip()
+
+    base_url = base_url.rstrip("/")
+    token_url = f"{base_url}/disbursement/token/" if base_url else ""
+    transfer_url = f"{base_url}/disbursement/v1_0/transfer" if base_url else ""
+    status_url_template = (
+        f"{base_url}/disbursement/v1_0/transfer/{{provider_ref}}" if base_url else ""
+    )
+
+    missing: list[str] = []
+    if not base_url:
+        missing.append(f"MOMO_{normalized}_{suffix}_BASE_URL")
+    if not subscription_key:
+        missing.append(f"MOMO_{normalized}_{suffix}_SUBSCRIPTION_KEY_DISBURSEMENT")
+    if not api_user:
+        missing.append(f"MOMO_{normalized}_{suffix}_API_USER")
+    if not api_key:
+        missing.append(f"MOMO_{normalized}_{suffix}_API_KEY")
+    if not webhook_secret:
+        missing.append(f"MOMO_{normalized}_WEBHOOK_SECRET")
+
+    return MomoCountryConfig(
+        country=normalized,
+        mode=mode,
+        base_url=base_url,
+        target_env=target_env,
+        subscription_key=subscription_key,
+        api_user=api_user,
+        api_key=api_key,
+        callback_url=callback_url,
+        webhook_secret=webhook_secret,
+        token_url=token_url,
+        transfer_url=transfer_url,
+        status_url_template=status_url_template,
+        missing=missing,
+    )
+
+
 class MtnMomoProvider(MobileMoneyProvider):
-    def __init__(self, http: Optional[HttpClient] = None):
-        timeout = float(getattr(settings, "MOMO_HTTP_TIMEOUT_S", 20.0))
-        self.http = http or HttpClient(timeout_s=timeout)
-        self._token: Optional[str] = None
-        self._token_exp: float = 0.0
+    def __init__(self, *_: Any, **__: Any):
+        pass
 
     def send_cashout(self, payout: dict) -> ProviderResult:
-        cfg = momo_config()
-        token = self._get_token()
-        if not token:
-            return ProviderResult(status="FAILED", error="momo token error", retryable=True)
+        country = _normalize(payout.get("country"))
+        cfg = _momo_country_config(country)
+        missing = cfg.missing
+        if missing:
+            # TODO(MTN_MOMO): supply country-specific credentials in env vars.
+            return ProviderResult(
+                status="FAILED",
+                error="MOMO_CREDENTIALS_MISSING",
+                response={"missing": missing},
+                retryable=False,
+            )
 
         phone = (payout.get("phone_e164") or "").strip()
         amount_cents = payout.get("amount_cents")
@@ -39,110 +135,56 @@ class MtnMomoProvider(MobileMoneyProvider):
         if amount_cents is None or int(amount_cents) <= 0:
             return ProviderResult(status="FAILED", error="Missing/invalid amount_cents", retryable=False)
 
-        amount = f"{int(amount_cents) / 100:.2f}"
         provider_ref = str(payout.get("provider_ref") or payout.get("id") or payout.get("transaction_id"))
 
-        url = f"{cfg.base_url}/disbursement/v1_0/transfer"
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "X-Reference-Id": provider_ref,
-            "X-Target-Environment": cfg.target_env,
-            "Ocp-Apim-Subscription-Key": cfg.subscription_key,
-            "Content-Type": "application/json",
-        }
-        if cfg.callback_url:
-            headers["X-Callback-Url"] = cfg.callback_url
-
-        body = {
-            "amount": amount,
+        # TODO(MTN_MOMO): replace stub with real API call once credentials and callbacks are ready.
+        response = {
+            "stub": True,
+            "mode": cfg.mode,
+            "country": cfg.country,
+            "transfer_url": cfg.transfer_url,
+            "status_poll_url": cfg.status_url_template.format(provider_ref=provider_ref),
+            "callback_url": cfg.callback_url,
+            "webhook_secret_configured": bool(cfg.webhook_secret),
             "currency": currency,
-            "externalId": str(payout.get("transaction_id") or provider_ref),
-            "payee": {"partyIdType": "MSISDN", "partyId": phone.lstrip("+")},
-            "payerMessage": payout.get("payer_message") or "NepXy cash-out",
-            "payeeNote": payout.get("payee_note") or "NepXy cash-out",
         }
-
-        try:
-            resp = self.http.post(url, headers=headers, json_body=body, debug=True)
-        except httpx.TimeoutException:
-            return ProviderResult(status="FAILED", error="Gateway timeout", retryable=True)
-        except Exception as e:
-            return ProviderResult(status="FAILED", error=f"Provider error: {e}", retryable=True)
-
-        if resp.status_code in (200, 201, 202):
-            return ProviderResult(status="SENT", provider_ref=provider_ref, response=resp.json)
-
-        return ProviderResult(
-            status="FAILED",
-            provider_ref=None,
-            response={"http_status": resp.status_code, "body": resp.json, "text": resp.text},
-            error=f"HTTP {resp.status_code}",
-            retryable=is_retryable_http(resp.status_code),
-        )
+        return ProviderResult(status="SENT", provider_ref=provider_ref, response=response, retryable=True)
 
     def get_cashout_status(self, payout: dict) -> ProviderResult:
-        cfg = momo_config()
-        token = self._get_token()
-        if not token:
-            return ProviderResult(status="SENT", error="momo token error", retryable=True)
-
+        country = _normalize(payout.get("country"))
+        cfg = _momo_country_config(country)
         provider_ref = str(payout.get("provider_ref") or payout.get("id") or payout.get("transaction_id"))
-        url = f"{cfg.base_url}/disbursement/v1_0/transfer/{provider_ref}"
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "X-Target-Environment": cfg.target_env,
-            "Ocp-Apim-Subscription-Key": cfg.subscription_key,
+
+        if cfg.missing:
+            # TODO(MTN_MOMO): supply country-specific credentials for status polling.
+            return ProviderResult(
+                status="SENT",
+                provider_ref=provider_ref,
+                error="MOMO_CREDENTIALS_MISSING",
+                response={"missing": cfg.missing, "status_poll_url": cfg.status_url_template},
+                retryable=True,
+            )
+
+        response = {
+            "stub": True,
+            "mode": cfg.mode,
+            "country": cfg.country,
+            "status_poll_url": cfg.status_url_template.format(provider_ref=provider_ref),
         }
+        return ProviderResult(status="SENT", provider_ref=provider_ref, response=response, retryable=True)
 
-        try:
-            resp = self.http.get(url, headers=headers, debug=True)
-        except httpx.TimeoutException:
-            return ProviderResult(status="SENT", provider_ref=provider_ref, error="Gateway timeout", retryable=True)
-        except Exception as e:
-            return ProviderResult(status="SENT", provider_ref=provider_ref, error=f"Provider error: {e}", retryable=True)
-
-        if resp.status_code == 200 and isinstance(resp.json, dict):
-            st = (resp.json.get("status") or resp.json.get("financialTransactionStatus") or "").upper()
-            if st in ("SUCCESSFUL", "SUCCESS", "COMPLETED"):
-                return ProviderResult(status="CONFIRMED", provider_ref=provider_ref, response=resp.json)
-            if st in ("FAILED", "REJECTED", "CANCELLED"):
-                return ProviderResult(status="FAILED", provider_ref=provider_ref, response=resp.json, error=st, retryable=False)
-            return ProviderResult(status="SENT", provider_ref=provider_ref, response=resp.json, retryable=True)
-
-        return ProviderResult(
-            status="SENT",
-            provider_ref=provider_ref,
-            response={"http_status": resp.status_code, "body": resp.json, "text": resp.text},
-            error=f"HTTP {resp.status_code}",
-            retryable=is_retryable_http(resp.status_code),
-        )
-
-    def _get_token(self) -> Optional[str]:
-        cfg = momo_config()
-        now = time.time()
-        if self._token and now < (self._token_exp - 30):
-            return self._token
-
-        if not (cfg.base_url and cfg.api_user and cfg.api_key and cfg.subscription_key):
-            return None
-
-        basic = base64.b64encode(f"{cfg.api_user}:{cfg.api_key}".encode()).decode()
-        url = f"{cfg.base_url}/disbursement/token/"
-        headers = {
-            "Authorization": f"Basic {basic}",
-            "Ocp-Apim-Subscription-Key": cfg.subscription_key,
-            "X-Target-Environment": cfg.target_env,
-        }
-
-        try:
-            resp = self.http.post(url, headers=headers, json_body=None, debug=True)
-        except Exception:
-            return None
-
-        if resp.status_code == 200 and isinstance(resp.json, dict) and resp.json.get("access_token"):
-            self._token = resp.json["access_token"]
-            expires_in = int(resp.json.get("expires_in") or 3600)
-            self._token_exp = now + expires_in
-            return self._token
-
+    def webhook_event_to_status(self, payload: dict) -> Optional[str]:
+        status = _normalize(payload.get("status") or payload.get("financialTransactionStatus"))
+        if status in ("SUCCESSFUL", "SUCCESS", "COMPLETED"):
+            return "CONFIRMED"
+        if status in ("FAILED", "REJECTED", "CANCELLED"):
+            return "FAILED"
         return None
+
+    def verify_webhook_signature(self, headers: dict, raw_body: str, country: str) -> bool:
+        cfg = _momo_country_config(country)
+        if not cfg.webhook_secret:
+            # TODO(MTN_MOMO): configure MOMO_<COUNTRY>_WEBHOOK_SECRET for verification.
+            return False
+        # TODO(MTN_MOMO): implement HMAC verification once MTN signature spec is confirmed.
+        return False

@@ -1,11 +1,13 @@
+from __future__ import annotations
 
+import logging
 
-# routes/admin_roles.py
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
+
 from db import get_conn
 from db_session import set_db_actor
-from deps.admin import require_admin
 from deps.auth import CurrentUser
+from deps.admin import require_admin
 from schemas import (
     AdminSetRoleRequest,
     AdminClearRoleRequest,
@@ -16,14 +18,30 @@ from services.audit_log import write_audit_log
 
 router = APIRouter(prefix="/v1/admin/roles", tags=["admin-roles"])
 
+logger = logging.getLogger("nexapay")
+
 
 @router.get("", response_model=UserRoleListResponse)
 def list_roles(admin: CurrentUser = Depends(require_admin)):
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            set_db_actor(cur, admin.user_id)
-            cur.execute("SELECT * FROM users.list_user_roles_secure();")
-            rows = cur.fetchall()
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                set_db_actor(cur, admin.user_id)
+                cur.execute(
+                    """
+                    SELECT user_id, role, created_at
+                    FROM users.user_roles
+                    ORDER BY created_at DESC NULLS LAST, user_id;
+                    """
+                )
+                rows = cur.fetchall()
+    except Exception as exc:
+        logger.exception(
+            "admin_roles.list_roles failed admin_id=%s error=%s",
+            getattr(admin, "user_id", None),
+            exc,
+        )
+        raise HTTPException(status_code=500, detail="Unable to list admin roles")
 
     items = [UserRoleItem(user_id=r[0], role=r[1], created_at=r[2]) for r in rows]
     return UserRoleListResponse(items=items)
@@ -35,7 +53,11 @@ def set_role(payload: AdminSetRoleRequest, admin: CurrentUser = Depends(require_
         with conn.cursor() as cur:
             set_db_actor(cur, admin.user_id)
             cur.execute(
-                "SELECT users.set_user_role_secure(%s::uuid, %s::text);",
+                """
+                INSERT INTO users.user_roles (user_id, role)
+                VALUES (%s::uuid, %s::text)
+                ON CONFLICT (user_id) DO UPDATE SET role = EXCLUDED.role;
+                """,
                 (str(payload.target_user_id), payload.role),
             )
         write_audit_log(
@@ -54,7 +76,10 @@ def clear_role(payload: AdminClearRoleRequest, admin: CurrentUser = Depends(requ
         with conn.cursor() as cur:
             set_db_actor(cur, admin.user_id)
             cur.execute(
-                "SELECT users.clear_user_role_secure(%s::uuid);",
+                """
+                DELETE FROM users.user_roles
+                WHERE user_id = %s::uuid;
+                """,
                 (str(payload.target_user_id),),
             )
         write_audit_log(

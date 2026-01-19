@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import uuid
+
 from fastapi.testclient import TestClient
 
 from db import get_conn
@@ -8,15 +10,20 @@ from tests.conftest import _auth_headers, AuthedUser
 
 
 def test_reconcile_flags_provider_mismatch(client: TestClient, user2: AuthedUser, funded_wallet2_xof: str):
+    provider_ref = f"recon-confirm-{uuid.uuid4()}"
     payload = {
         "wallet_id": funded_wallet2_xof,
         "amount_cents": 1000,
         "country": "GH",
-        "provider_ref": "recon-confirm",
+        "provider_ref": provider_ref,
         "provider": "MOMO",
         "phone_e164": "+233501234567",
     }
-    r = client.post("/v1/cash-out/mobile-money", json=payload, headers=_auth_headers(user2.token, idem="recon-confirm"))
+    r = client.post(
+        "/v1/cash-out/mobile-money",
+        json=payload,
+        headers=_auth_headers(user2.token, idem=provider_ref),
+    )
     assert r.status_code in (200, 201), r.text
     tx_id = r.json().get("transaction_id")
     assert tx_id, "missing transaction_id"
@@ -29,7 +36,7 @@ def test_reconcile_flags_provider_mismatch(client: TestClient, user2: AuthedUser
                 SET status = 'PENDING', provider_ref = %s, updated_at = now() - interval '5 minutes'
                 WHERE transaction_id = %s::uuid
                 """,
-                ("recon-confirm", str(tx_id)),
+                (provider_ref, str(tx_id)),
             )
             cur.execute(
                 """
@@ -46,7 +53,7 @@ def test_reconcile_flags_provider_mismatch(client: TestClient, user2: AuthedUser
                   now() - interval '10 minutes', now() - interval '10 minutes'
                 )
                 """,
-                ("+233501234567", "recon-confirm"),
+                ("+233501234567", provider_ref),
             )
         conn.commit()
 

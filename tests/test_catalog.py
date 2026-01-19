@@ -1,8 +1,5 @@
-def test_catalog_payout_providers(client, user2):
-    r = client.get(
-        "/v1/catalog/payout-providers",
-        headers={"Authorization": f"Bearer {user2.token}"},
-    )
+def test_catalog_payout_providers(client):
+    r = client.get("/v1/catalog/payout-providers")
     assert r.status_code == 200, r.text
     payload = r.json()
 

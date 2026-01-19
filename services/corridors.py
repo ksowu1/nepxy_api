@@ -2,13 +2,14 @@ from __future__ import annotations
 
 from fastapi import HTTPException
 
+from app.catalog.enablement import ENABLED_DESTINATIONS, ENABLED_PROVIDERS_BY_COUNTRY
 
 ALLOWED_SEND_COUNTRIES: set[str] = {"US"}
-ALLOWED_RECEIVE_COUNTRIES: set[str] = {"GH", "BJ"}
+ALLOWED_RECEIVE_COUNTRIES: set[str] = {country.upper() for country in ENABLED_DESTINATIONS}
 
 ALLOWED_PAYOUT_PROVIDERS: dict[str, set[str]] = {
-    "GH": {"MOMO"},
-    "BJ": {"MOMO", "FLOOZ", "TMONEY"},
+    country.upper(): {provider.upper() for provider in providers}
+    for country, providers in ENABLED_PROVIDERS_BY_COUNTRY.items()
 }
 
 CURRENCY_RULES: dict[str, dict[str, str]] = {

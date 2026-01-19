@@ -1,8 +1,9 @@
 
 import logging
+import os
 import time
 import uuid
-from fastapi import Request
+from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -11,6 +12,36 @@ from services.metrics import increment_http_requests
 from settings import settings
 
 logger = logging.getLogger("nexapay.http")
+
+
+class StagingGateMiddleware(BaseHTTPMiddleware):
+    ALLOWED_PATHS = {"/healthz", "/readyz", "/openapi.json"}
+
+    def __init__(self, app):
+        super().__init__(app)
+
+    async def dispatch(self, request: Request, call_next):
+        key = (os.getenv("STAGING_GATE_KEY") or "").strip()
+        env = (
+            (os.getenv("ENVIRONMENT") or os.getenv("ENV") or (settings.ENV or "dev"))
+            .strip()
+            .lower()
+        )
+        gate_enabled = env == "staging" and bool(key)
+        path = request.url.path or ""
+        if gate_enabled and not self._is_allowed_path(path):
+            header = request.headers.get("X-Staging-Key")
+            if header != key:
+                raise HTTPException(status_code=403, detail="STAGING_GATE_KEY_REQUIRED")
+        return await call_next(request)
+
+    def _is_allowed_path(self, path: str) -> bool:
+        if path in self.ALLOWED_PATHS:
+            return True
+        if path.startswith("/docs"):
+            return True
+        return False
+
 
 class RequestContextMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):

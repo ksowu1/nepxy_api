@@ -88,6 +88,24 @@ class CashOutResponse(BaseModel):
     corridor: str | None = None
 
 
+class PayoutQuoteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    destination_country: CountryCode
+    amount_cents: int = Field(gt=0)
+    preferred_method: Optional[str] = None
+
+
+class PayoutQuoteResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    destination_country: str
+    currency: str | None = None
+    available_methods: List[str]
+    recommended_method: str | None = None
+    providers_per_method: dict[str, list[str]]
+    fee_cents: int
+    notes: Optional[str] = None
+
+
 class P2PTransferRequest(BaseModel):
     """Current API schema used by /v1/p2p/transfer."""
     model_config = ConfigDict(extra="forbid")
@@ -126,9 +144,11 @@ class CashOutRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     wallet_id: UUID
     amount_cents: int = Field(gt=0)
-    country: CountryCode
+    country: CountryCode | None = None
+    destination_country: CountryCode | None = None
+    delivery_method: Optional[str] = None
     provider_ref: Optional[str] = Field(default=None, min_length=3, max_length=100)
-    provider: MobileMoneyProvider = MobileMoneyProvider.MOMO
+    provider: Optional[MobileMoneyProvider] = None
     phone_e164: Optional[str] = Field(default=None, pattern=E164_REGEX)
 
 

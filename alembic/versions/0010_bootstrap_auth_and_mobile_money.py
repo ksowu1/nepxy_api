@@ -182,6 +182,9 @@ def upgrade() -> None:
             received_at timestamptz NOT NULL DEFAULT now()
         );
 
+        ALTER TABLE alembic_version
+            ALTER COLUMN version_num TYPE text;
+
         ALTER TABLE ledger.ledger_transactions
             ADD COLUMN IF NOT EXISTS provider text;
         ALTER TABLE ledger.ledger_transactions

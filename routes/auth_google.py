@@ -14,6 +14,7 @@ from pydantic import BaseModel
 
 from db import get_conn
 from security import create_access_token, create_session_refresh_token, hash_password
+from services.invite_only import is_email_allowed, is_invite_only_enabled
 
 # IMPORTANT: keep these imports at MODULE level so pytest can monkeypatch:
 #   monkeypatch.setattr(routes.auth_google.google_id_token, "verify_oauth2_token", ...)
@@ -205,6 +206,9 @@ def google_login(req: GoogleAuthRequest):
     # Optional but recommended
     if claims.get("email_verified") is False:
         raise HTTPException(status_code=401, detail="Google email not verified.")
+
+    if is_invite_only_enabled() and not is_email_allowed(email):
+        raise HTTPException(status_code=403, detail="INVITE_ONLY_EMAIL_NOT_ALLOWED")
 
     user_id = _find_user_id_in_main_users(email)
 

@@ -22,6 +22,7 @@ DB_ERROR_HTTP_MAP: dict[str, tuple[int, str]] = {
     "INSUFFICIENT_FUNDS": (409, "Insufficient funds"),
     "FX_CONVERT_FAILED": (500, "FX convert failed"),
     "CASHIN_FAILED": (500, "Cash-in failed"),
+    "NO_CASHOUT_LIMIT_CONFIGURED": (400, "NO_CASHOUT_LIMIT_CONFIGURED"),
 
 }
 
@@ -54,6 +55,10 @@ def _extract_code_from_text(text: str) -> str | None:
     m = _DB_ERROR_PATTERN.search(text)
     if m:
         return m.group(1)
+
+    lower = text.lower()
+    if "no cashout limit configured" in lower:
+        return "NO_CASHOUT_LIMIT_CONFIGURED"
 
     return None
 
