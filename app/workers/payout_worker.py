@@ -246,6 +246,56 @@ def _handle_pending(conn, p: dict) -> None:
         )
         return
 
+    if provider_name == "MOMO" and (p.get("provider_ref") or "").strip():
+        res = _normalize_result(provider.get_cashout_status(p))
+        provider_ref = p.get("provider_ref")
+        provider_response = res.response
+        err = res.error
+
+        if res.status == "CONFIRMED":
+            update_status(
+                conn,
+                payout_id=payout_id,
+                from_status=current_status,
+                new_status="CONFIRMED",
+                provider_ref=provider_ref,
+                provider_response=provider_response,
+                last_error=None,
+                retryable=False,
+                attempt_count=attempt_count,
+                next_retry_at=None,
+            )
+            return
+
+        if res.status == "FAILED":
+            update_status(
+                conn,
+                payout_id=payout_id,
+                from_status=current_status,
+                new_status="FAILED",
+                provider_ref=provider_ref,
+                provider_response=provider_response,
+                last_error=err or "FAILED",
+                retryable=False,
+                attempt_count=attempt_count,
+                next_retry_at=None,
+            )
+            return
+
+        update_status(
+            conn,
+            payout_id=payout_id,
+            from_status=current_status,
+            new_status="SENT",
+            provider_ref=provider_ref,
+            provider_response=provider_response,
+            last_error=err,
+            retryable=True,
+            attempt_count=attempt_count,
+            next_retry_at=_now() + timedelta(seconds=POLL_BACKOFF_SECONDS),
+        )
+        return
+
     # SEND (this is the only place attempt_count increments)
     attempt = attempt_count + 1
     res = _normalize_result(provider.send_cashout(p))

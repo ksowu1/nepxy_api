@@ -174,12 +174,18 @@ def main():
 
     step("Poll payout status")
     final_status = status
-    for _ in range(10):
+    for _ in range(60):
         time.sleep(1)
         resp = request("GET", base_url + "/v1/payouts/%s" % tx_id, headers=auth_headers(token))
         payout = _safe_json(resp)
         final_status = payout.get("status")
-        print("status=%s provider=%s" % (final_status, payout.get("provider")))
+        provider_ref = payout.get("provider_ref")
+        provider_response = payout.get("provider_response") or {}
+        response_keys = list(provider_response.keys()) if isinstance(provider_response, dict) else []
+        print(
+            "status=%s provider=%s provider_ref=%s provider_response_keys=%s"
+            % (final_status, payout.get("provider"), provider_ref, response_keys)
+        )
         if final_status == "CONFIRMED":
             break
 
