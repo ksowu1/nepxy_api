@@ -59,7 +59,9 @@ class MomoProvider:
             return resp
 
         if resp.status_code in (200, 201, 202):
-            return ProviderResult(status="SENT", provider_ref=provider_ref, response=_safe_json(resp))
+            payload = _safe_json(resp)
+            ref = _extract_reference_id(payload) or provider_ref
+            return ProviderResult(status="SENT", provider_ref=ref, response=_response_payload(resp))
 
         retryable = _is_retryable_http(resp.status_code)
         return ProviderResult(
@@ -91,18 +93,18 @@ class MomoProvider:
         if resp.status_code == 200 and isinstance(payload, dict):
             status = (payload.get("status") or payload.get("financialTransactionStatus") or "").upper()
             if status in ("SUCCESSFUL", "SUCCESS", "COMPLETED"):
-                return ProviderResult(status="CONFIRMED", provider_ref=provider_ref, response=payload)
+                return ProviderResult(status="CONFIRMED", provider_ref=provider_ref, response=_response_payload(resp))
             if status in ("FAILED", "REJECTED"):
                 return ProviderResult(
                     status="FAILED",
                     provider_ref=provider_ref,
-                    response=payload,
+                    response=_response_payload(resp),
                     error=status,
                     retryable=False,
                 )
             if status == "PENDING":
-                return ProviderResult(status="SENT", provider_ref=provider_ref, response=payload, retryable=True)
-            return ProviderResult(status="SENT", provider_ref=provider_ref, response=payload, retryable=True)
+                return ProviderResult(status="SENT", provider_ref=provider_ref, response=_response_payload(resp), retryable=True)
+            return ProviderResult(status="SENT", provider_ref=provider_ref, response=_response_payload(resp), retryable=True)
 
         retryable = _is_retryable_http(resp.status_code)
         return ProviderResult(
@@ -228,6 +230,16 @@ def _response_payload(resp) -> dict[str, Any]:
         "body": _safe_json(resp),
         "text": getattr(resp, "text", None),
     }
+
+
+def _extract_reference_id(payload: Any) -> str | None:
+    if not isinstance(payload, dict):
+        return None
+    for key in ("referenceId", "reference_id", "transactionReference", "providerReference", "reference"):
+        value = payload.get(key)
+        if value:
+            return str(value)
+    return None
 
 
 def _is_retryable_http(status_code: int) -> bool:

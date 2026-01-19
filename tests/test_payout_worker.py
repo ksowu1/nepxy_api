@@ -292,7 +292,11 @@ def test_worker_momo_transfer_creates_sent_and_saves_response(monkeypatch):
         if url.endswith("/disbursement/token/"):
             return SimpleNamespace(status_code=200, json=lambda: {"access_token": "token-123", "expires_in": 3600})
         if url.endswith("/disbursement/v1_0/transfer"):
-            return SimpleNamespace(status_code=202, json=lambda: {"status": "PENDING"})
+            return SimpleNamespace(
+                status_code=202,
+                json=lambda: {"status": "PENDING", "referenceId": "momo-transfer-ref"},
+                text="",
+            )
         raise AssertionError("unexpected url")
 
     monkeypatch.setattr("services.providers.momo.requests.post", fake_post)
@@ -339,11 +343,12 @@ def test_worker_momo_transfer_creates_sent_and_saves_response(monkeypatch):
 
     status, attempts, provider_ref, last_error = _get_status(payout_id)
     assert status == "SENT"
-    assert provider_ref is not None
+    assert provider_ref == "momo-transfer-ref"
     assert last_error is None
     provider_response = _get_provider_response(payout_id)
     assert provider_response is not None
-    assert provider_response.get("status") == "PENDING"
+    assert provider_response.get("http_status") == 202
+    assert provider_response.get("body", {}).get("status") == "PENDING"
 
     with get_conn() as conn:
         cur = conn.cursor()

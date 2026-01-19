@@ -191,19 +191,24 @@ def main():
 
     step("Poll payout status")
     final_status = status
+    last_status = None
     for _ in range(60):
         time.sleep(1)
+        if admin_email and admin_password:
+            _process_payouts_once(base_url, admin_token)
         resp = request("GET", base_url + "/v1/payouts/%s" % tx_id, headers=auth_headers(token))
         payout = _safe_json(resp)
         final_status = payout.get("status")
         provider_ref = payout.get("provider_ref")
         provider_response = payout.get("provider_response") or {}
         response_keys = list(provider_response.keys()) if isinstance(provider_response, dict) else []
-        print(
-            "status=%s provider=%s provider_ref=%s provider_response_keys=%s"
-            % (final_status, payout.get("provider"), provider_ref, response_keys)
-        )
-        if final_status == "CONFIRMED":
+        if final_status != last_status:
+            print(
+                "status=%s provider=%s provider_ref=%s provider_response_keys=%s"
+                % (final_status, payout.get("provider"), provider_ref, response_keys)
+            )
+            last_status = final_status
+        if final_status in ("CONFIRMED", "FAILED"):
             break
 
     if final_status != "CONFIRMED":

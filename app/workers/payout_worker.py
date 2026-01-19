@@ -455,6 +455,14 @@ def _handle_sent(conn, p: dict) -> None:
         return
 
     res = _normalize_result(provider.get_cashout_status(p))
+    if provider_name == "MOMO":
+        logger.info(
+            "momo payout reconcile payout_id=%s provider_ref=%s status=%s error=%s",
+            payout_id,
+            p.get("provider_ref"),
+            res.status,
+            res.error,
+        )
 
     provider_ref = p.get("provider_ref")  # keep existing; do NOT synthesize
     provider_response = res.response

@@ -53,7 +53,7 @@ def test_momo_transfer_created(monkeypatch):
             assert headers["X-Target-Environment"] == "sandbox"
             assert headers["Ocp-Apim-Subscription-Key"] == "sub-123"
             assert json["currency"] == "GHS"
-            return _FakeResponse(202, {"status": "PENDING"})
+            return _FakeResponse(202, {"status": "PENDING", "referenceId": "momo-ref-123"})
         raise AssertionError("unexpected url")
 
     monkeypatch.setattr("services.providers.momo.requests.post", fake_post)
@@ -68,8 +68,9 @@ def test_momo_transfer_created(monkeypatch):
     }
     result = provider.initiate_payout(payout)
     assert result.status == "SENT"
-    assert result.provider_ref == "ref-123"
-    assert result.response == {"status": "PENDING"}
+    assert result.provider_ref == "momo-ref-123"
+    assert result.response["http_status"] == 202
+    assert result.response["body"]["status"] == "PENDING"
     assert calls["token"] == 1
     assert calls["transfer"] == 1
 
@@ -90,4 +91,5 @@ def test_momo_status_successful_updates_payout(monkeypatch):
     provider = MomoProvider()
     result = provider.get_status({"provider_ref": "ref-123"})
     assert result.status == "CONFIRMED"
-    assert result.response == {"status": "SUCCESSFUL"}
+    assert result.response["http_status"] == 200
+    assert result.response["body"]["status"] == "SUCCESSFUL"
