@@ -328,10 +328,17 @@ def cash_out_mobile_money(
     if destination_requested:
         if not destination:
             raise HTTPException(status_code=400, detail="DESTINATION_NOT_FOUND")
+        providers_by_method = destination.get("providers_per_method") or {}
+        providers_for_method = providers_by_method.get(DELIVERY_METHOD_MOBILE_MONEY) or []
         if DELIVERY_METHOD_MOBILE_MONEY not in (destination.get("delivery_methods") or []):
             raise HTTPException(status_code=400, detail="DELIVERY_METHOD_UNAVAILABLE")
         if destination.get("status") != "AVAILABLE":
             raise HTTPException(status_code=400, detail=DESTINATION_COMING_SOON)
+        if body.provider:
+            provider_code = _canonical_provider_code(body.provider.value)
+            allowed = {_canonical_provider_code(p) for p in providers_for_method}
+            if provider_code not in allowed:
+                raise HTTPException(status_code=400, detail="PROVIDER_NOT_AVAILABLE_FOR_COUNTRY")
     else:
         if destination and destination.get("status") != "AVAILABLE":
             raise HTTPException(status_code=400, detail=DESTINATION_COMING_SOON)

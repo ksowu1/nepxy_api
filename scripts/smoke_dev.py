@@ -7,6 +7,7 @@ import hashlib
 
 import requests
 
+_session = requests.Session()
 
 def die(message, code=1):
     print(message)
@@ -16,10 +17,16 @@ def die(message, code=1):
 def step(message):
     print("\n==> " + message)
 
+def _configure_session():
+    key = os.getenv("STAGING_GATE_KEY")
+    if key:
+        _session.headers.update({"X-Staging-Key": key})
+        print("Using staging gate header")
+
 
 def request(method, url, headers=None, json_body=None, data=None, allow_failure=False):
     try:
-        resp = requests.request(method, url, headers=headers, json=json_body, data=data)
+        resp = _session.request(method, url, headers=headers, json=json_body, data=data)
     except Exception as exc:
         die("Request failed: %s" % exc)
     if resp.status_code < 200 or resp.status_code >= 300:
@@ -187,6 +194,7 @@ def _ensure_admin_role(base_url, admin_token, admin_user_id, admin_email, allow_
 
 def main():
     base_url = os.getenv("BASE_URL", "http://127.0.0.1:8001")
+    _configure_session()
     user_email = os.getenv("USER_EMAIL")
     user_password = os.getenv("USER_PASSWORD")
     admin_email = os.getenv("ADMIN_EMAIL")
