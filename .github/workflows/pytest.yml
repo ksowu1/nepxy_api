@@ -1,55 +1,62 @@
-name: pytest
+name: Pytest
 
 on:
   push:
+    branches: [ main, fix/**, feat/** ]
   pull_request:
+    branches: [ main ]
 
 jobs:
-  tests:
+  test:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+
     services:
       postgres:
         image: postgres:16
         env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: nepxy
+          POSTGRES_USER: nepxy
+          POSTGRES_PASSWORD: nepxy
+          POSTGRES_DB: nepxy_test
         ports:
           - 5432:5432
         options: >-
-          --health-cmd="pg_isready -U postgres -d nepxy"
-          --health-interval=5s
+          --health-cmd="pg_isready -U nepxy"
+          --health-interval=10s
           --health-timeout=5s
-          --health-retries=20
+          --health-retries=5
 
     env:
-      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/nepxy
-      TMONEY_WEBHOOK_SECRET: dev_secret_tmoney
-      FLOOZ_WEBHOOK_SECRET: dev_secret_flooz
-      MOMO_WEBHOOK_SECRET: dev_secret_momo
-      THUNES_WEBHOOK_SECRET: dev_secret_thunes
+      DATABASE_URL: postgresql://nepxy:nepxy@localhost:5432/nepxy_test
+      ENV: test
+      MM_MODE: sandbox
+      MM_ENABLED_PROVIDERS: TMONEY,FLOOZ,MOMO,MTN_MOMO,THUNES
+      MM_STRICT_STARTUP_VALIDATION: false
 
     steps:
-      - name: Checkout
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Python
+      - name: Set up Python 3.13
         uses: actions/setup-python@v5
         with:
-          python-version: "3.13.1"
+          python-version: "3.13"
+          cache: pip
 
-      - name: Install deps
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libpq-dev
+
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Load schema
+      - name: Run migrations
         run: |
-          for i in {1..30}; do
-            psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/schema_v1.sql && break
-            echo "waiting for postgres..."
-            sleep 1
-          done
+          alembic upgrade head
 
       - name: Run tests
-        run: make release-check
+        run: |
+          pytest -q --disable-warnings --maxfail=1
