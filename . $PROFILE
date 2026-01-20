@@ -1,5 +1,0 @@
-function git-backup-all {
-  git push onedrive --all
-  git push onedrive --tags
-}
-Set-Alias backup-all git-backup-all
