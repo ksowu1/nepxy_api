@@ -7,6 +7,8 @@ import hashlib
 
 import requests
 
+_session = requests.Session()
+
 
 def die(message, code=1):
     print(message)
@@ -17,9 +19,16 @@ def step(message):
     print("\n==> " + message)
 
 
+def _configure_session():
+    key = os.getenv("STAGING_GATE_KEY")
+    if key:
+        _session.headers.update({"X-Staging-Key": key})
+        print("Using staging gate header")
+
+
 def request(method, url, headers=None, json_body=None, data=None):
     try:
-        resp = requests.request(method, url, headers=headers, json=json_body, data=data)
+        resp = _session.request(method, url, headers=headers, json=json_body, data=data)
     except Exception as exc:
         die("Request failed: %s" % exc)
     if resp.status_code < 200 or resp.status_code >= 300:
@@ -47,6 +56,7 @@ def sign_tmoney(payload_bytes, secret):
 
 def main():
     base_url = os.getenv("STAGING_BASE_URL") or os.getenv("BASE_URL")
+    _configure_session()
     user_email = os.getenv("STAGING_USER_EMAIL")
     user_password = os.getenv("STAGING_USER_PASSWORD")
     admin_email = os.getenv("STAGING_ADMIN_EMAIL")
