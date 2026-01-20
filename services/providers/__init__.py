@@ -4,7 +4,7 @@ from enum import Enum
 from typing import Protocol
 
 from app.providers.base import ProviderResult
-from services.providers.momo import MomoProvider
+from app.providers.mobile_money.momo import MomoProvider
 
 
 class ProviderName(str, Enum):
