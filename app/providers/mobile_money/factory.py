@@ -30,7 +30,7 @@ def get_provider(name: str):
         provider = FloozProvider()
 
     elif key == "MOMO":
-        from services.providers.momo import MomoProvider
+        from app.providers.mobile_money.momo import MomoProvider
         provider = MomoProvider()
 
     elif key in ("MTN", "MTN_MOMO"):

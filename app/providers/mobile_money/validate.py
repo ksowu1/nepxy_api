@@ -16,7 +16,7 @@ from app.providers.mobile_money.config import (
 
 logger = logging.getLogger("nexapay")
 
-ALLOWED_PROVIDERS = {"TMONEY", "FLOOZ", "MTN_MOMO", "THUNES"}
+ALLOWED_PROVIDERS = {"TMONEY", "FLOOZ", "MTN_MOMO", "MOMO", "THUNES"}
 
 
 def _env(name: str) -> str:
@@ -36,8 +36,6 @@ def _sorted_csv(items: Iterable[str]) -> str:
 def _normalize_provider(p: str) -> str:
     p = (p or "").strip().upper()
     p = p.replace("-", "_").replace(" ", "_")
-    if p == "MOMO":
-        p = "MTN_MOMO"
     return p
 
 
@@ -88,7 +86,7 @@ def validate_mobile_money_startup() -> None:
             prefix = "FLOOZ_REAL_" if mode == "real" else "FLOOZ_SANDBOX_"
             _require(missing, prefix + "API_KEY", prefix + "CASHOUT_URL")
 
-        elif p == "MTN_MOMO":
+        elif p in {"MTN_MOMO", "MOMO"}:
             prefix = "MOMO_REAL_" if mode == "real" else "MOMO_SANDBOX_"
             _require(
                 missing,

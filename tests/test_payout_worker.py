@@ -262,8 +262,8 @@ def test_worker_momo_status_successful_transitions(monkeypatch):
         assert url.endswith("/disbursement/v1_0/transfer/pytest-momo-ref")
         return SimpleNamespace(status_code=200, json=lambda: {"status": "SUCCESSFUL"})
 
-    monkeypatch.setattr("services.providers.momo.requests.post", fake_post)
-    monkeypatch.setattr("services.providers.momo.requests.get", fake_get)
+    monkeypatch.setattr("app.providers.mobile_money.momo.requests.post", fake_post)
+    monkeypatch.setattr("app.providers.mobile_money.momo.requests.get", fake_get)
 
     payout_id = _insert_payout(
         provider="MOMO",
@@ -294,7 +294,7 @@ def test_worker_momo_transfer_creates_sent_and_saves_response(monkeypatch):
         if url.endswith("/disbursement/token/"):
             return SimpleNamespace(status_code=200, json=lambda: {"access_token": "token-123", "expires_in": 3600})
         if url.endswith("/disbursement/v1_0/transfer"):
-            assert json["currency"] == "GHS"
+            assert json["currency"] == "EUR"
             return SimpleNamespace(
                 status_code=202,
                 json=lambda: {"status": "PENDING", "referenceId": "momo-transfer-ref"},
@@ -302,7 +302,7 @@ def test_worker_momo_transfer_creates_sent_and_saves_response(monkeypatch):
             )
         raise AssertionError("unexpected url")
 
-    monkeypatch.setattr("services.providers.momo.requests.post", fake_post)
+    monkeypatch.setattr("app.providers.mobile_money.momo.requests.post", fake_post)
 
     payout_id = uuid.uuid4()
     tx_id = uuid.uuid4()
@@ -374,8 +374,8 @@ def test_worker_momo_status_failed_marks_failed(monkeypatch):
     def fake_get(url, headers=None):
         return SimpleNamespace(status_code=200, json=lambda: {"status": "FAILED"})
 
-    monkeypatch.setattr("services.providers.momo.requests.post", fake_post)
-    monkeypatch.setattr("services.providers.momo.requests.get", fake_get)
+    monkeypatch.setattr("app.providers.mobile_money.momo.requests.post", fake_post)
+    monkeypatch.setattr("app.providers.mobile_money.momo.requests.get", fake_get)
 
     payout_id = _insert_payout(
         provider="MOMO",
@@ -410,8 +410,8 @@ def test_worker_momo_sent_uses_status_only(monkeypatch):
     def fake_get(url, headers=None):
         return SimpleNamespace(status_code=200, json=lambda: {"status": "PENDING"})
 
-    monkeypatch.setattr("services.providers.momo.requests.post", fake_post)
-    monkeypatch.setattr("services.providers.momo.requests.get", fake_get)
+    monkeypatch.setattr("app.providers.mobile_money.momo.requests.post", fake_post)
+    monkeypatch.setattr("app.providers.mobile_money.momo.requests.get", fake_get)
 
     payout_id = _insert_payout(
         provider="MOMO",
@@ -448,7 +448,7 @@ def test_worker_momo_pending_with_ref_still_creates(monkeypatch):
             )
         raise AssertionError("unexpected url")
 
-    monkeypatch.setattr("services.providers.momo.requests.post", fake_post)
+    monkeypatch.setattr("app.providers.mobile_money.momo.requests.post", fake_post)
 
     payout_id = uuid.uuid4()
     tx_id = uuid.uuid4()

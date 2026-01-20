@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from services.providers.momo import MomoProvider
+from app.providers.mobile_money.momo import MomoProvider
 
 
 class _FakeResponse:
@@ -32,7 +32,7 @@ def test_momo_token_success(monkeypatch):
         assert auth == ("user-123", "key-123")
         return _FakeResponse(200, {"access_token": "token-123", "expires_in": 3600})
 
-    monkeypatch.setattr("services.providers.momo.requests.post", fake_post)
+    monkeypatch.setattr("app.providers.mobile_money.momo.requests.post", fake_post)
 
     provider = MomoProvider()
     token = provider.get_token()
@@ -57,7 +57,7 @@ def test_momo_transfer_created(monkeypatch):
             return _FakeResponse(202, {"status": "PENDING", "referenceId": "momo-ref-123"})
         raise AssertionError("unexpected url")
 
-    monkeypatch.setattr("services.providers.momo.requests.post", fake_post)
+    monkeypatch.setattr("app.providers.mobile_money.momo.requests.post", fake_post)
 
     provider = MomoProvider()
     payout = {
@@ -88,7 +88,7 @@ def test_momo_create_invalid_currency_non_retryable(monkeypatch):
             return _FakeResponse(400, {"code": "INVALID_CURRENCY"})
         raise AssertionError("unexpected url")
 
-    monkeypatch.setattr("services.providers.momo.requests.post", fake_post)
+    monkeypatch.setattr("app.providers.mobile_money.momo.requests.post", fake_post)
 
     provider = MomoProvider()
     result = provider.create_transfer(
@@ -104,6 +104,61 @@ def test_momo_create_invalid_currency_non_retryable(monkeypatch):
     assert result.error == "INVALID_CURRENCY"
 
 
+def test_momo_sandbox_currency_override(monkeypatch):
+    _set_env(monkeypatch)
+    monkeypatch.setenv("MOMO_SANDBOX_CURRENCY", "EUR")
+
+    def fake_post(url, headers=None, auth=None, json=None):
+        if url.endswith("/disbursement/token/"):
+            return _FakeResponse(200, {"access_token": "token-123", "expires_in": 3600})
+        if url.endswith("/disbursement/v1_0/transfer"):
+            assert json["currency"] == "EUR"
+            return _FakeResponse(202, {"status": "PENDING", "referenceId": "momo-ref-123"})
+        raise AssertionError("unexpected url")
+
+    monkeypatch.setattr("app.providers.mobile_money.momo.requests.post", fake_post)
+
+    provider = MomoProvider()
+    payout = {
+        "amount_cents": 1234,
+        "currency": "XOF",
+        "phone_e164": "+233201234567",
+        "provider_ref": "ref-123",
+        "external_ref": "ext-123",
+        "country": "GH",
+    }
+    result = provider.initiate_payout(payout)
+    assert result.status == "SENT"
+
+
+def test_momo_real_uses_payout_currency(monkeypatch):
+    _set_env(monkeypatch)
+    monkeypatch.setenv("MOMO_ENV", "real")
+    monkeypatch.setenv("MOMO_SANDBOX_CURRENCY", "EUR")
+
+    def fake_post(url, headers=None, auth=None, json=None):
+        if url.endswith("/disbursement/token/"):
+            return _FakeResponse(200, {"access_token": "token-123", "expires_in": 3600})
+        if url.endswith("/disbursement/v1_0/transfer"):
+            assert json["currency"] == "GHS"
+            return _FakeResponse(202, {"status": "PENDING", "referenceId": "momo-ref-123"})
+        raise AssertionError("unexpected url")
+
+    monkeypatch.setattr("app.providers.mobile_money.momo.requests.post", fake_post)
+
+    provider = MomoProvider()
+    payout = {
+        "amount_cents": 1234,
+        "currency": "GHS",
+        "phone_e164": "+233201234567",
+        "provider_ref": "ref-123",
+        "external_ref": "ext-123",
+        "country": "GH",
+    }
+    result = provider.initiate_payout(payout)
+    assert result.status == "SENT"
+
+
 def test_momo_status_successful_updates_payout(monkeypatch):
     _set_env(monkeypatch)
 
@@ -114,8 +169,8 @@ def test_momo_status_successful_updates_payout(monkeypatch):
         assert url.endswith("/disbursement/v1_0/transfer/ref-123")
         return _FakeResponse(200, {"status": "SUCCESSFUL"})
 
-    monkeypatch.setattr("services.providers.momo.requests.post", fake_post)
-    monkeypatch.setattr("services.providers.momo.requests.get", fake_get)
+    monkeypatch.setattr("app.providers.mobile_money.momo.requests.post", fake_post)
+    monkeypatch.setattr("app.providers.mobile_money.momo.requests.get", fake_get)
 
     provider = MomoProvider()
     result = provider.get_status({"provider_ref": "ref-123"})

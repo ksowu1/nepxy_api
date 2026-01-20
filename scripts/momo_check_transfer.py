@@ -5,7 +5,7 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from services.providers.momo import MomoProvider
+from app.providers.mobile_money.momo import MomoProvider
 
 
 def _safe_json(resp):
