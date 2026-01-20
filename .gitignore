@@ -58,9 +58,12 @@ scripts/env.ps1
 *\357\200\276*
 
 
-# PowerShell / local env junk
-$PROFILE
-*.ps1.bak
-*.ps1~
-.env.*
+# accidental artifact (literal filename)
+. $PROFILE
 
+# actual PowerShell profile path patterns
+Microsoft.PowerShell_profile.ps1
+*PowerShell*profile*.ps1
+
+# env files
+.env.*
