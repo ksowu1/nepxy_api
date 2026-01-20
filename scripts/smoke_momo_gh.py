@@ -7,6 +7,7 @@ import requests
 
 
 _session = requests.Session()
+_session.request = _session.request
 
 
 def die(message, code=1):
@@ -26,8 +27,9 @@ def _configure_session():
 
 
 def request(method, url, headers=None, json_body=None, allow_failure=False):
+    print("-> %s %s" % (method, url))
     try:
-        resp = _session.request(method, url, headers=headers, json=json_body)
+        resp = _session.request(method, url, headers=headers, json=json_body, timeout=20)
     except Exception as exc:
         die("Request failed: %s" % exc)
     if resp.status_code < 200 or resp.status_code >= 300:
@@ -106,13 +108,17 @@ def _retry_payout(base_url, admin_token, tx_id):
 
 
 def _process_payouts_once(base_url, admin_token):
-    resp = request(
-        "POST",
-        base_url + "/v1/admin/mobile-money/payouts/process-once",
-        headers=auth_headers(admin_token),
-        json_body={"batch_size": 100, "stale_seconds": 0},
-        allow_failure=True,
-    )
+    try:
+        resp = _session.request(
+            "POST",
+            base_url + "/v1/admin/mobile-money/payouts/process-once",
+            headers=auth_headers(admin_token),
+            json={"batch_size": 1, "stale_seconds": 0},
+            timeout=10,
+        )
+    except Exception as exc:
+        print("Admin process-once error: %s" % exc)
+        return False
     if resp.status_code in (200, 201):
         return True
     detail = _safe_json(resp).get("detail") or resp.text
@@ -192,6 +198,7 @@ def main():
     step("Poll payout status")
     final_status = status
     last_status = None
+    sent_polled = False
     for _ in range(60):
         time.sleep(1)
         if admin_email and admin_password:
@@ -208,6 +215,15 @@ def main():
                 % (final_status, payout.get("provider"), provider_ref, response_keys)
             )
             last_status = final_status
+        if final_status == "SENT" and not sent_polled:
+            stage = provider_response.get("stage") if isinstance(provider_response, dict) else None
+            http_status = provider_response.get("http_status") if isinstance(provider_response, dict) else None
+            if stage == "create" and http_status not in (200, 201, 202):
+                die("MoMo create failed (http_status=%s)" % http_status)
+            if admin_email and admin_password:
+                print("Triggering MoMo poll tick")
+                _process_payouts_once(base_url, admin_token)
+            sent_polled = True
         if final_status in ("CONFIRMED", "FAILED"):
             break
 

@@ -59,7 +59,8 @@ def claim_pending_payouts(conn, *, batch_size: int) -> list[dict[str, Any]]:
           p.next_retry_at,
           tx.amount_cents,
           tx.currency,
-          tx.external_ref
+          tx.external_ref,
+          tx.country
         FROM app.mobile_money_payouts p
         JOIN picked ON picked.id = p.id
         LEFT JOIN ledger.ledger_transactions tx ON tx.id = p.transaction_id
@@ -99,7 +100,8 @@ def claim_stale_sent_payouts(conn, *, batch_size: int, stale_after_seconds: int)
           p.next_retry_at,
           tx.amount_cents,
           tx.currency,
-          tx.external_ref
+          tx.external_ref,
+          tx.country
         FROM app.mobile_money_payouts p
         JOIN picked ON picked.id = p.id
         LEFT JOIN ledger.ledger_transactions tx ON tx.id = p.transaction_id

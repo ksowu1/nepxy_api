@@ -278,6 +278,8 @@ def test_worker_momo_status_successful_transitions(monkeypatch):
     assert status == "CONFIRMED"
     assert provider_ref == "pytest-momo-ref"
     assert last_error is None
+    provider_response = _get_provider_response(payout_id)
+    assert provider_response.get("stage") == "poll"
 
 
 def test_worker_momo_transfer_creates_sent_and_saves_response(monkeypatch):
@@ -292,6 +294,7 @@ def test_worker_momo_transfer_creates_sent_and_saves_response(monkeypatch):
         if url.endswith("/disbursement/token/"):
             return SimpleNamespace(status_code=200, json=lambda: {"access_token": "token-123", "expires_in": 3600})
         if url.endswith("/disbursement/v1_0/transfer"):
+            assert json["currency"] == "GHS"
             return SimpleNamespace(
                 status_code=202,
                 json=lambda: {"status": "PENDING", "referenceId": "momo-transfer-ref"},
@@ -347,6 +350,7 @@ def test_worker_momo_transfer_creates_sent_and_saves_response(monkeypatch):
     assert last_error is None
     provider_response = _get_provider_response(payout_id)
     assert provider_response is not None
+    assert provider_response.get("stage") == "create"
     assert provider_response.get("http_status") == 202
     assert provider_response.get("body", {}).get("status") == "PENDING"
 
@@ -386,6 +390,8 @@ def test_worker_momo_status_failed_marks_failed(monkeypatch):
     assert status == "FAILED"
     assert provider_ref == "pytest-momo-failed"
     assert last_error is not None
+    provider_response = _get_provider_response(payout_id)
+    assert provider_response.get("stage") == "poll"
 
 
 def test_worker_momo_sent_uses_status_only(monkeypatch):
@@ -419,9 +425,11 @@ def test_worker_momo_sent_uses_status_only(monkeypatch):
     status, attempts, provider_ref, last_error = _get_status(payout_id)
     assert status == "SENT"
     assert provider_ref == "pytest-momo-sent"
+    provider_response = _get_provider_response(payout_id)
+    assert provider_response.get("stage") == "poll"
 
 
-def test_worker_momo_pending_with_ref_skips_create(monkeypatch):
+def test_worker_momo_pending_with_ref_still_creates(monkeypatch):
     monkeypatch.setenv("MOMO_ENV", "sandbox")
     monkeypatch.setenv("MOMO_API_USER_ID", "user-123")
     monkeypatch.setenv("MOMO_API_KEY", "key-123")
@@ -432,26 +440,65 @@ def test_worker_momo_pending_with_ref_skips_create(monkeypatch):
     def fake_post(url, headers=None, auth=None, json=None):
         if url.endswith("/disbursement/token/"):
             return SimpleNamespace(status_code=200, json=lambda: {"access_token": "token-123", "expires_in": 3600})
-        raise AssertionError("transfer creation should not be called for PENDING with provider_ref")
-
-    def fake_get(url, headers=None):
-        return SimpleNamespace(status_code=200, json=lambda: {"status": "PENDING"})
+        if url.endswith("/disbursement/v1_0/transfer"):
+            return SimpleNamespace(
+                status_code=202,
+                json=lambda: {"status": "PENDING", "referenceId": "momo-ref-reuse"},
+                text="",
+            )
+        raise AssertionError("unexpected url")
 
     monkeypatch.setattr("services.providers.momo.requests.post", fake_post)
-    monkeypatch.setattr("services.providers.momo.requests.get", fake_get)
 
-    payout_id = _insert_payout(
-        provider="MOMO",
-        status="PENDING",
-        phone_e164="+233200000000",
-        provider_ref="pytest-momo-pending",
-    )
+    payout_id = uuid.uuid4()
+    tx_id = uuid.uuid4()
+    _insert_ledger_tx(tx_id=tx_id, amount_cents=1000, currency="GHS", country="GH")
+
+    with get_conn() as conn:
+        cur = conn.cursor()
+        now = datetime.now(timezone.utc)
+        cur.execute(
+            """
+            INSERT INTO app.mobile_money_payouts (
+              id, transaction_id, provider, phone_e164, provider_ref,
+              status, amount_cents, currency,
+              last_error, attempt_count, last_attempt_at, next_retry_at, retryable, provider_response,
+              created_at, updated_at
+            )
+            VALUES (
+              %s, %s, %s, %s, %s,
+              %s, %s, %s,
+              NULL, 0, NULL, NULL, TRUE, NULL,
+              %s, %s
+            )
+            """,
+            (
+                payout_id,
+                tx_id,
+                "MOMO",
+                "+233200000000",
+                "pytest-momo-pending",
+                "PENDING",
+                1000,
+                "GHS",
+                now,
+                now,
+            ),
+        )
+        conn.commit()
 
     payout_worker.process_once(batch_size=500, stale_seconds=0)
 
     status, attempts, provider_ref, last_error = _get_status(payout_id)
     assert status == "SENT"
-    assert provider_ref == "pytest-momo-pending"
+    assert provider_ref == "momo-ref-reuse"
+    provider_response = _get_provider_response(payout_id)
+    assert provider_response.get("stage") == "create"
+
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM ledger.ledger_transactions WHERE id = %s", (tx_id,))
+        conn.commit()
 
 
 def test_worker_schedules_retry_then_fails_after_max_attempts(monkeypatch):

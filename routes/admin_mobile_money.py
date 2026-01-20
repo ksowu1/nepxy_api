@@ -26,8 +26,8 @@ class PayoutRetryRequest(BaseModel):
 
 class PayoutProcessOnceRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    batch_size: int = Field(default=50, ge=1, le=500)
-    stale_seconds: int = Field(default=payout_worker.DEFAULT_STALE_SECONDS, ge=0, le=3600)
+    batch_size: int = Field(default=1, ge=1, le=500)
+    stale_seconds: int = Field(default=0, ge=0, le=3600)
 
 
 def _serialize_retry_summary(row: dict[str, Any]) -> dict[str, Any]:

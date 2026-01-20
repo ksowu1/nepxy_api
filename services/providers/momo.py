@@ -14,6 +14,9 @@ from app.providers.base import ProviderResult
 BASE_URL = "https://sandbox.momodeveloper.mtn.com"
 TOKEN_SAFETY_BUFFER_S = 60
 logger = logging.getLogger("nexapay")
+DESTINATION_CURRENCY = {
+    "GH": "GHS",
+}
 
 
 class MomoProvider:
@@ -34,7 +37,11 @@ class MomoProvider:
             return ProviderResult(status="FAILED", error="MOMO_CONFIG_MISSING", response={"missing": missing})
 
         phone = (payout.get("phone_e164") or "").strip()
-        currency = (payout.get("currency") or "").strip().upper()
+        dest_country = (payout.get("destination_country") or payout.get("country") or "").strip().upper()
+        currency = DESTINATION_CURRENCY.get(dest_country) or (payout.get("currency") or "").strip().upper()
+        request_currency = currency
+        if self.target_env == "sandbox":
+            request_currency = (os.getenv("MOMO_SANDBOX_CURRENCY") or "EUR").strip().upper()
         amount_cents = payout.get("amount_cents")
         if not phone:
             return ProviderResult(status="FAILED", error="Missing phone_e164", retryable=False)
@@ -47,29 +54,13 @@ class MomoProvider:
         external_ref = str(payout.get("external_ref") or payout.get("transaction_id") or provider_ref)
 
         amount = f"{int(amount_cents) / 100:.2f}"
-        resp = self.create_transfer(
+        return self.create_transfer(
             amount=amount,
-            currency=currency,
+            currency=request_currency,
             external_id=external_ref,
             phone_e164=phone,
             reference_id=provider_ref,
             note=payout.get("payee_note") or "NepXy cash-out",
-        )
-        if isinstance(resp, ProviderResult):
-            return resp
-
-        if resp.status_code in (200, 201, 202):
-            payload = _safe_json(resp)
-            ref = _extract_reference_id(payload) or provider_ref
-            return ProviderResult(status="SENT", provider_ref=ref, response=_response_payload(resp))
-
-        retryable = _is_retryable_http(resp.status_code)
-        return ProviderResult(
-            status="FAILED",
-            provider_ref=provider_ref,
-            response=_response_payload(resp),
-            error=f"HTTP {resp.status_code}",
-            retryable=retryable,
         )
 
     def get_status(self, payout: dict) -> ProviderResult:
@@ -93,24 +84,33 @@ class MomoProvider:
         if resp.status_code == 200 and isinstance(payload, dict):
             status = (payload.get("status") or payload.get("financialTransactionStatus") or "").upper()
             if status in ("SUCCESSFUL", "SUCCESS", "COMPLETED"):
-                return ProviderResult(status="CONFIRMED", provider_ref=provider_ref, response=_response_payload(resp))
+                return ProviderResult(status="CONFIRMED", provider_ref=provider_ref, response=_response_payload(resp, stage="poll"))
             if status in ("FAILED", "REJECTED"):
                 return ProviderResult(
                     status="FAILED",
                     provider_ref=provider_ref,
-                    response=_response_payload(resp),
+                    response=_response_payload(resp, stage="poll"),
                     error=status,
                     retryable=False,
                 )
             if status == "PENDING":
-                return ProviderResult(status="SENT", provider_ref=provider_ref, response=_response_payload(resp), retryable=True)
-            return ProviderResult(status="SENT", provider_ref=provider_ref, response=_response_payload(resp), retryable=True)
+                return ProviderResult(status="SENT", provider_ref=provider_ref, response=_response_payload(resp, stage="poll"), retryable=True)
+            return ProviderResult(status="SENT", provider_ref=provider_ref, response=_response_payload(resp, stage="poll"), retryable=True)
+
+        if _is_currency_error(payload):
+            return ProviderResult(
+                status="FAILED",
+                provider_ref=provider_ref,
+                response=_response_payload(resp, stage="poll"),
+                error=_currency_error_code(payload),
+                retryable=False,
+            )
 
         retryable = _is_retryable_http(resp.status_code)
         return ProviderResult(
             status="SENT",
             provider_ref=provider_ref,
-            response=_response_payload(resp),
+            response=_response_payload(resp, stage="poll"),
             error=f"HTTP {resp.status_code}",
             retryable=retryable,
         )
@@ -175,10 +175,52 @@ class MomoProvider:
                 resp.status_code,
                 reference_id,
             )
-            return resp
+            payload = _safe_json(resp)
+            if isinstance(payload, dict):
+                code = (payload.get("code") or "").upper()
+                if code == "INVALID_CURRENCY":
+                    return ProviderResult(
+                        status="FAILED",
+                        provider_ref=reference_id,
+                        response=_response_payload(resp, stage="create"),
+                        error=code,
+                        retryable=False,
+                    )
+                if code == "CURRENCY_NOT_SUPPORTED":
+                    return ProviderResult(
+                        status="FAILED",
+                        provider_ref=reference_id,
+                        response=_response_payload(resp, stage="create"),
+                        error=code,
+                        retryable=False,
+                    )
+
+            if resp.status_code in (200, 201, 202):
+                ref = _extract_reference_id(payload) or reference_id
+                return ProviderResult(
+                    status="SENT",
+                    provider_ref=ref,
+                    response=_response_payload(resp, stage="create"),
+                    retryable=True,
+                )
+
+            retryable = _is_retryable_http(resp.status_code)
+            return ProviderResult(
+                status="FAILED",
+                provider_ref=reference_id,
+                response=_response_payload(resp, stage="create"),
+                error=f"HTTP {resp.status_code}",
+                retryable=retryable,
+            )
         except Exception as exc:
             logger.warning("momo transfer create error reference_id=%s err=%s", reference_id, exc)
-            return ProviderResult(status="FAILED", provider_ref=reference_id, error=str(exc), retryable=True)
+            return ProviderResult(
+                status="FAILED",
+                provider_ref=reference_id,
+                response={"stage": "create", "error": str(exc)},
+                error=str(exc),
+                retryable=True,
+            )
 
     def get_transfer_status(self, reference_id: str):
         token = self.get_access_token_disbursement()
@@ -224,8 +266,9 @@ def _safe_json(resp) -> Any:
         return None
 
 
-def _response_payload(resp) -> dict[str, Any]:
+def _response_payload(resp, *, stage: str) -> dict[str, Any]:
     return {
+        "stage": stage,
         "http_status": resp.status_code,
         "body": _safe_json(resp),
         "text": getattr(resp, "text", None),
@@ -240,6 +283,24 @@ def _extract_reference_id(payload: Any) -> str | None:
         if value:
             return str(value)
     return None
+
+
+def _currency_error_code(payload: Any) -> str | None:
+    if not isinstance(payload, dict):
+        return None
+    raw = payload.get("code") or payload.get("errorCode") or payload.get("error") or payload.get("message")
+    if not raw:
+        return None
+    value = str(raw).upper()
+    if "INVALID_CURRENCY" in value:
+        return "INVALID_CURRENCY"
+    if "CURRENCY_NOT_SUPPORTED" in value:
+        return "CURRENCY_NOT_SUPPORTED"
+    return None
+
+
+def _is_currency_error(payload: Any) -> bool:
+    return _currency_error_code(payload) is not None
 
 
 def _is_retryable_http(status_code: int) -> bool:

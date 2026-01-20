@@ -250,46 +250,82 @@ def _handle_pending(conn, p: dict) -> None:
         )
         return
 
-    if provider_name == "MOMO" and (p.get("provider_ref") or "").strip():
-        res = _normalize_result(provider.get_cashout_status(p))
-        provider_ref = p.get("provider_ref")
-        provider_response = res.response
-        err = res.error
-        logger.info(
-            "momo payout poll payout_id=%s provider_ref=%s status=%s error=%s",
-            payout_id,
-            provider_ref,
-            res.status,
-            err,
-        )
-
-        if res.status == "CONFIRMED":
-            update_status(
-                conn,
-                payout_id=payout_id,
-                from_status=current_status,
-                new_status="CONFIRMED",
-                provider_ref=provider_ref,
-                provider_response=provider_response,
-                last_error=None,
-                retryable=False,
-                attempt_count=attempt_count,
-                next_retry_at=None,
-            )
-            return
-
-        if res.status == "FAILED":
+    if provider_name == "MOMO":
+        amount_cents = p.get("amount_cents")
+        currency = (p.get("currency") or "").strip().upper()
+        if amount_cents is None or int(amount_cents) <= 0:
+            attempt = attempt_count + 1
             update_status(
                 conn,
                 payout_id=payout_id,
                 from_status=current_status,
                 new_status="FAILED",
-                provider_ref=provider_ref,
-                provider_response=provider_response,
-                last_error=err or "FAILED",
+                provider_ref=p.get("provider_ref"),
+                provider_response=p.get("provider_response"),
+                last_error="Missing/invalid amount_cents",
                 retryable=False,
-                attempt_count=attempt_count,
+                attempt_count=attempt,
                 next_retry_at=None,
+                touch_last_attempt_at=False,
+            )
+            return
+        if not currency:
+            attempt = attempt_count + 1
+            update_status(
+                conn,
+                payout_id=payout_id,
+                from_status=current_status,
+                new_status="FAILED",
+                provider_ref=p.get("provider_ref"),
+                provider_response=p.get("provider_response"),
+                last_error="Missing currency",
+                retryable=False,
+                attempt_count=attempt,
+                next_retry_at=None,
+                touch_last_attempt_at=False,
+            )
+            return
+
+        provider_ref = (p.get("provider_ref") or str(uuid.uuid4())).strip()
+        external_ref = str(p.get("external_ref") or p.get("transaction_id") or provider_ref)
+        amount = f"{int(amount_cents) / 100:.2f}"
+
+        attempt = attempt_count + 1
+        res = _normalize_result(
+            provider.create_transfer(
+                amount=amount,
+                currency=currency,
+                external_id=external_ref,
+                phone_e164=phone,
+                reference_id=provider_ref,
+                note="NepXy cash-out",
+            )
+        )
+        increment_payout_attempt(provider_name, res.status)
+        logger.info(
+            "momo payout create payout_id=%s status=%s provider_ref=%s error=%s",
+            payout_id,
+            res.status,
+            res.provider_ref,
+            res.error,
+        )
+
+        provider_response = res.response
+        err = res.error
+        returned_ref = res.provider_ref or provider_ref
+
+        if res.status == "SENT":
+            update_status(
+                conn,
+                payout_id=payout_id,
+                from_status=current_status,
+                new_status="SENT",
+                provider_ref=returned_ref,
+                provider_response=provider_response,
+                last_error=None,
+                retryable=True,
+                attempt_count=attempt,
+                next_retry_at=_next_retry_at(attempt),
             )
             return
 
@@ -297,13 +333,13 @@ def _handle_pending(conn, p: dict) -> None:
             conn,
             payout_id=payout_id,
             from_status=current_status,
-            new_status="SENT",
-            provider_ref=provider_ref,
+            new_status="FAILED",
+            provider_ref=returned_ref,
             provider_response=provider_response,
-            last_error=err,
-            retryable=True,
-            attempt_count=attempt_count,
-            next_retry_at=_now() + timedelta(seconds=POLL_BACKOFF_SECONDS),
+            last_error=err or "MOMO_CREATE_FAILED",
+            retryable=bool(res.retryable),
+            attempt_count=attempt,
+            next_retry_at=None,
         )
         return
 
