@@ -27,7 +27,7 @@ jobs:
           --health-retries=5
 
     env:
-      DATABASE_URL: postgresql://nepxy:nepxy@localhost:5432/nepxy_test
+      DATABASE_URL: postgresql://postgres:redmoon1A!@127.0.0.1:5432/nexapay_core
       ENV: test
       MM_MODE: sandbox
       MM_ENABLED_PROVIDERS: TMONEY,FLOOZ,MOMO,MTN_MOMO,THUNES
