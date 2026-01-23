@@ -74,6 +74,21 @@ def health():
     }
 
 
+@router.get("/version")
+def version():
+    env_value = _resolve_env()
+    build_time = (os.getenv("BUILD_TIME") or os.getenv("APP_BUILD_TIME") or "").strip() or None
+    payload = {
+        "git_sha": _resolve_git_sha(),
+        "env": env_value,
+        "environment": env_value,
+        "mm_mode": (os.getenv("MM_MODE") or "").strip(),
+    }
+    if build_time:
+        payload["build_time"] = build_time
+    return payload
+
+
 @router.get("/readyz")
 def readyz():
     db_ok, db_error = _check_db()
