@@ -110,3 +110,7 @@ Rotate secrets quickly:
 3) Confirm logs + health checks.
 4) Remove old secret when safe.
 
+## Fly "Not Listening" Warnings
+- Ensure the app binds to `0.0.0.0` and uses `PORT` (or `8001` fallback).
+- Confirm `fly.toml` `internal_port` matches the server port and health checks hit `/health`.
+- Check app logs for startup errors: `flyctl logs --app nepxy-api-prod`.
