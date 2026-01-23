@@ -1,6 +1,7 @@
 import uuid
 
 from app.catalog.enablement import MISSING_PROVIDER_CONFIG, PROVIDER_DISABLED
+from settings import settings
 from tests.conftest import _auth_headers
 
 
@@ -49,6 +50,26 @@ def test_cash_out_unsupported_provider_fails(client, user2, funded_wallet2_xof):
         "country": "GH",
         "provider_ref": f"gh-bad-ref-{uuid.uuid4()}",
         "provider": "TMONEY",
+        "phone_e164": "+233201234567",
+    }
+    r = client.post(
+        "/v1/cash-out/mobile-money",
+        json=payload,
+        headers=_auth_headers(user2.token, idem=idem),
+    )
+    assert r.status_code == 400, r.text
+    assert r.json().get("detail") == PROVIDER_DISABLED
+
+
+def test_cash_out_provider_disabled_by_config(client, user2, funded_wallet2_xof, monkeypatch):
+    monkeypatch.setattr(settings, "MM_ENABLED_PROVIDERS", "TMONEY")
+    idem = f"pytest-disabled-provider-{uuid.uuid4()}"
+    payload = {
+        "wallet_id": funded_wallet2_xof,
+        "amount_cents": 100,
+        "country": "GH",
+        "provider_ref": f"gh-disabled-ref-{uuid.uuid4()}",
+        "provider": "MOMO",
         "phone_e164": "+233201234567",
     }
     r = client.post(

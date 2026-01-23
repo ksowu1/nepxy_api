@@ -271,8 +271,23 @@ def admin_list_payout_webhook_events(
           received_at,
           COALESCE(payload_json, payload) AS payload_json
         FROM app.webhook_events
-        WHERE provider = ANY(%s)
+        WHERE provider = ANY(%s::text[])
           AND (external_ref = %s OR provider_ref = %s)
+        ORDER BY received_at DESC
+        LIMIT %s
+    """
+    events_sql_no_provider = """
+        SELECT
+          id::text AS id,
+          provider,
+          external_ref,
+          provider_ref,
+          status_raw,
+          signature_valid,
+          received_at,
+          COALESCE(payload_json, payload) AS payload_json
+        FROM app.webhook_events
+        WHERE (external_ref = %s OR provider_ref = %s)
         ORDER BY received_at DESC
         LIMIT %s
     """
@@ -298,6 +313,16 @@ def admin_list_payout_webhook_events(
                 ),
             )
             rows = cur.fetchall() or []
+            if not rows:
+                cur.execute(
+                    events_sql_no_provider,
+                    (
+                        payout_external_ref,
+                        payout.get("provider_ref"),
+                        limit,
+                    ),
+                )
+                rows = cur.fetchall() or []
 
     events = []
     for row in rows:

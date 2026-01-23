@@ -39,15 +39,38 @@ def _check_migrations() -> bool:
         return False
 
 
+def _resolve_env() -> str:
+    return (os.getenv("ENVIRONMENT") or os.getenv("ENV") or "").strip()
+
+
+def _resolve_git_sha() -> str | None:
+    return (
+        (os.getenv("FLY_IMAGE_REF") or "").strip()
+        or (os.getenv("GIT_SHA") or "").strip()
+        or (os.getenv("FLY_APP_NAME") or "").strip()
+        or None
+    )
+
+
 @router.get("/healthz")
 def healthz():
     db_ok, db_error = _check_db()
     return {
         "ok": True,
         "version": os.getenv("APP_VERSION", "1.0.0"),
-        "git_sha": os.getenv("GIT_SHA"),
+        "git_sha": _resolve_git_sha(),
         "db_ok": db_ok,
         "db_error": db_error,
+    }
+
+
+@router.get("/health")
+def health():
+    return {
+        "ok": True,
+        "env": _resolve_env(),
+        "mm_mode": (os.getenv("MM_MODE") or "").strip(),
+        "git_sha": _resolve_git_sha(),
     }
 
 
@@ -59,7 +82,7 @@ def readyz():
     return {
         "ready": ready,
         "version": os.getenv("APP_VERSION", "1.0.0"),
-        "git_sha": os.getenv("GIT_SHA"),
+        "git_sha": _resolve_git_sha(),
         "db_ok": db_ok,
         "db_error": db_error,
         "migrations_ok": migrations_ok,

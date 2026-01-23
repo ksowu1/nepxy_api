@@ -13,7 +13,7 @@ router = APIRouter(prefix="/mock/tmoney", tags=["mock-tmoney"])
 _seen: dict[str, datetime] = {}
 
 
-@router.post("/cashout")
+@router.post("/cashout", operation_id="mock_tmoney_cashout_post")
 async def tmoney_cashout(req: Request):
     # Be tolerant: provider might send weird body; don't crash.
     payload = None
@@ -35,8 +35,13 @@ async def tmoney_cashout(req: Request):
     }
 
 
-@router.api_route("/cashout", methods=["GET","POST","PUT","PATCH","DELETE","OPTIONS","HEAD"])
-async def tmoney_cashout(req: Request):
+@router.api_route(
+    "/cashout",
+    methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
+    operation_id="mock_tmoney_cashout_any_method",
+    include_in_schema=False,
+)
+async def tmoney_cashout_any_method(req: Request):
     try:
         payload = await req.json()
     except Exception:

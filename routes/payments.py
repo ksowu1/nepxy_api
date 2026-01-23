@@ -64,6 +64,13 @@ def _canonical_provider_code(value: str | None) -> str:
     return normalized
 
 
+def _provider_enabled_in_config(provider: str | None) -> bool:
+    enabled = {_canonical_provider_code(p) for p in enabled_providers()}
+    if not enabled:
+        return False
+    return _canonical_provider_code(provider) in enabled
+
+
 def _resolve_destination_country(body: CashOutRequest) -> tuple[str, bool]:
     country = _normalize(body.destination_country or body.country)
     if not country:
@@ -402,6 +409,8 @@ def cash_out_mobile_money(
         destination if destination_requested else None,
         providers_for_method if destination_requested else None,
     )
+    if not _provider_enabled_in_config(provider_code):
+        raise HTTPException(status_code=400, detail=PROVIDER_DISABLED)
     if not is_provider_enabled_for_country(country, provider_code):
         raise HTTPException(status_code=400, detail=PROVIDER_DISABLED)
 
