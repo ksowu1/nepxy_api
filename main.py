@@ -41,6 +41,7 @@ from middleware import (
     RateLimitMiddleware,
     SecurityHeadersMiddleware,
     StagingGateMiddleware,
+    MaintenanceModeMiddleware,
 )
 
 logger = logging.getLogger("nexapay")
@@ -145,6 +146,7 @@ def create_app() -> FastAPI:
 
     app.add_middleware(StagingGateMiddleware)
     app.add_middleware(RateLimitMiddleware)
+    app.add_middleware(MaintenanceModeMiddleware)
     app.add_middleware(RequestContextMiddleware)
     app.add_middleware(SecurityHeadersMiddleware)
 
