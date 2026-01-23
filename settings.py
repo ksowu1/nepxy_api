@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     # -----------------------
     # Environment
     # -----------------------
-    ENV: Literal["dev", "staging", "prod"] = "dev"
+    ENV: Literal["dev", "staging", "prod", "test"] = "dev"
 
     # -----------------------
     # DB
@@ -168,6 +168,7 @@ class Settings(BaseSettings):
 
     THUNES_PAYER_ID_TG: str = ""
     THUNES_PAYER_ID_BJ: str = ""
+    THUNES_PAYER_ID_GH: str = ""
 
     THUNES_TX_TYPE: str = "C2C"
     THUNES_QUOTE_MODE: str = "DESTINATION_AMOUNT"
@@ -255,6 +256,7 @@ def validate_env_settings() -> None:
             _missing_if_empty(missing, "THUNES_WEBHOOK_SECRET", settings.THUNES_WEBHOOK_SECRET)
             if settings.THUNES_ALLOW_UNSIGNED_WEBHOOKS:
                 missing.append("THUNES_ALLOW_UNSIGNED_WEBHOOKS")
+            _missing_if_empty(missing, "THUNES_PAYER_ID_GH", settings.THUNES_PAYER_ID_GH)
             if settings.MM_MODE == "real":
                 _missing_if_empty(missing, "THUNES_REAL_API_ENDPOINT", settings.THUNES_REAL_API_ENDPOINT)
                 _missing_if_empty(missing, "THUNES_REAL_API_KEY", settings.THUNES_REAL_API_KEY)
@@ -291,3 +293,5 @@ def validate_env_settings() -> None:
         logger.warning("ENV=%s missing MOMO_WEBHOOK_SECRET", env)
     if "THUNES" in providers and not settings.THUNES_WEBHOOK_SECRET:
         logger.warning("ENV=%s missing THUNES_WEBHOOK_SECRET", env)
+    if "THUNES" in providers and not settings.THUNES_PAYER_ID_GH:
+        logger.warning("ENV=%s missing THUNES_PAYER_ID_GH", env)
