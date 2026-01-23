@@ -82,7 +82,7 @@ def test_webhook_event_logged_on_success(client, user1, wallet1_xof, monkeypatch
     r = client.post(
         "/v1/webhooks/tmoney",
         content=body_bytes,
-        headers={"Content-Type": "application/json", "X-Signature": sig},
+        headers={"Content-Type": "application/json", "X-Signature": sig, "X-Request-ID": "pytest-req-1"},
     )
     assert r.status_code == 200, r.text
 
@@ -91,7 +91,7 @@ def test_webhook_event_logged_on_success(client, user1, wallet1_xof, monkeypatch
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT signature_valid, update_applied, ignored, payout_transaction_id
+                SELECT signature_valid, update_applied, ignored, payout_transaction_id, request_id
                 FROM webhook_events
                 WHERE provider=%s AND external_ref=%s
                 ORDER BY received_at DESC
@@ -101,7 +101,7 @@ def test_webhook_event_logged_on_success(client, user1, wallet1_xof, monkeypatch
             )
             row = cur.fetchone()
             assert row, "missing webhook_events row"
-            sig_valid, update_applied, ignored, payout_tx = row
+            sig_valid, update_applied, ignored, payout_tx, request_id = row
 
             cur.execute(
                 "SELECT COUNT(*) FROM webhook_events WHERE provider=%s AND external_ref=%s",
@@ -112,6 +112,7 @@ def test_webhook_event_logged_on_success(client, user1, wallet1_xof, monkeypatch
     assert after == before + 1
     assert sig_valid is True
     assert payout_tx is not None
+    assert request_id == "pytest-req-1"
     # depending on terminal/no-op, either applied or ignored, but NOT both True
     assert not (bool(update_applied) and bool(ignored))
 
@@ -134,7 +135,7 @@ def test_webhook_event_logged_on_invalid_signature_401(client, monkeypatch):
     r = client.post(
         "/v1/webhooks/tmoney",
         content=body_bytes,
-        headers={"Content-Type": "application/json", "X-Signature": "sha256=deadbeef"},
+        headers={"Content-Type": "application/json", "X-Signature": "sha256=deadbeef", "X-Request-ID": "pytest-req-2"},
     )
     assert r.status_code == 401, r.text
 
@@ -142,7 +143,7 @@ def test_webhook_event_logged_on_invalid_signature_401(client, monkeypatch):
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT signature_valid, signature_error
+                SELECT signature_valid, signature_error, request_id
                 FROM webhook_events
                 WHERE provider=%s AND external_ref=%s
                 ORDER BY received_at DESC
@@ -152,7 +153,7 @@ def test_webhook_event_logged_on_invalid_signature_401(client, monkeypatch):
             )
             row = cur.fetchone()
             assert row, "missing webhook_events row"
-            sig_valid, sig_err = row
+            sig_valid, sig_err, request_id = row
 
             cur.execute(
                 "SELECT COUNT(*) FROM webhook_events WHERE provider=%s AND external_ref=%s",
@@ -163,3 +164,4 @@ def test_webhook_event_logged_on_invalid_signature_401(client, monkeypatch):
     assert after == before + 1
     assert sig_valid is False
     assert sig_err in ("MISSING_SIGNATURE", "INVALID_SIGNATURE")
+    assert request_id == "pytest-req-2"

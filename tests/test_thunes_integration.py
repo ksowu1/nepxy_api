@@ -233,7 +233,7 @@ def test_thunes_send_cashout_uses_external_ref(monkeypatch):
     def fake_post(url, json=None, headers=None, auth=None, timeout=None):
         if url.endswith("/quotations"):
             captured["quote"] = json
-            return FakeResp(201, {"id": "quote-1"})
+            return FakeResp(201, {"id": "quote-1", "fee": "1.23", "rate": "1.1"})
         if "/quotations/quote-1/transactions" in url:
             return FakeResp(201, {"id": "thunes-tx-123"})
         if url.endswith("/transactions/thunes-tx-123/confirm"):
@@ -256,6 +256,13 @@ def test_thunes_send_cashout_uses_external_ref(monkeypatch):
     assert res.status == "SENT"
     assert res.provider_ref == "thunes-tx-123"
     assert captured["quote"]["external_id"] == "ext-123"
+    assert res.response["quote_request"]["external_id"] == "ext-123"
+    assert res.response["quote_response"]["data"]["id"] == "quote-1"
+    assert res.response["transaction_create_response"]["data"]["id"] == "thunes-tx-123"
+    assert res.response["confirm_response"]["data"]["status"] == "PENDING"
+    assert res.response["quotation_id"] == "quote-1"
+    assert res.response["transaction_id"] == "thunes-tx-123"
+    assert res.response["quote_meta"]["fee"] == "1.23"
 
 
 def test_thunes_get_cashout_status_mapping(monkeypatch):
