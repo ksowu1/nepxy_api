@@ -1,61 +1,64 @@
 name: Pytest
 
 on:
-  push:
-    branches: [ main, fix/**, feat/** ]
   pull_request:
+  push:
     branches: [ main ]
 
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
 
     services:
       postgres:
         image: postgres:16
         env:
-          POSTGRES_USER: nepxy
-          POSTGRES_PASSWORD: nepxy
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
           POSTGRES_DB: nepxy_test
         ports:
           - 5432:5432
         options: >-
-          --health-cmd="pg_isready -U nepxy"
+          --health-cmd="pg_isready -U postgres -d nepxy_test"
           --health-interval=10s
           --health-timeout=5s
-          --health-retries=5
+          --health-retries=10
 
     env:
-      DATABASE_URL: postgresql://nepxy:nepxy@localhost:5432/nepxy_test
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/nepxy_test
       ENV: test
       MM_MODE: sandbox
-      MM_ENABLED_PROVIDERS: TMONEY,FLOOZ,MOMO,MTN_MOMO,THUNES
-      MM_STRICT_STARTUP_VALIDATION: false
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Python 3.13
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-          cache: pip
-
-      - name: Install system deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential libpq-dev
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run migrations
+      - name: Wait for Postgres
         run: |
-          alembic upgrade head
+          python - << "PY"
+          import time, psycopg
+          for i in range(60):
+            try:
+              psycopg.connect("postgresql://postgres:postgres@localhost:5432/nepxy_test").close()
+              print("Postgres up")
+              break
+            except Exception as e:
+              time.sleep(1)
+          else:
+            raise SystemExit("Postgres did not start")
+          PY
+
+      - name: Load schema
+        run: |
+          psql "$DATABASE_URL" -f db/schema_v1.sql
 
       - name: Run tests
         run: |
