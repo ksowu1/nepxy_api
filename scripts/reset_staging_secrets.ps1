@@ -50,5 +50,8 @@ if (Test-Path $envSync) {
 }
 
 if ($RunCanary) {
+    if ($env:BOOTSTRAP_ADMIN_SECRET) {
+        $env:CANARY_ALLOW_BOOTSTRAP = "1"
+    }
     & python scripts/canary_smoke.py
 }

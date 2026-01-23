@@ -1,28 +1,64 @@
 param()
 
+$appName = "nepxy-staging"
+
+function Get-MachineId([string]$AppName) {
+    try {
+        $json = & fly machine list -a $AppName --json 2>$null
+        if ($LASTEXITCODE -eq 0 -and $json) {
+            $machines = $json | ConvertFrom-Json
+            if ($machines -and $machines.Count -gt 0) {
+                return $machines[0].id
+            }
+        }
+    } catch {
+        # fall through to text parsing
+    }
+
+    $lines = & fly machine list -a $AppName 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not $lines) {
+        throw "Unable to list Fly machines for $AppName."
+    }
+    foreach ($line in ($lines -split "`n")) {
+        $trimmed = $line.Trim()
+        if (-not $trimmed -or $trimmed -match "^ID\s") { continue }
+        $parts = $trimmed -split "\s+"
+        if ($parts.Count -gt 0) {
+            return $parts[0]
+        }
+    }
+    throw "No Fly machines found for $AppName."
+}
+
 function Mask-Value([string]$Value) {
     if (-not $Value) { return "<empty>" }
     if ($Value.Length -le 4) { return ("*" * $Value.Length) }
     return ("*" * ($Value.Length - 4)) + $Value.Substring($Value.Length - 4)
 }
 
-$issueOutput = & fly ssh issue --app nepxy-staging 2>&1
-if ($LASTEXITCODE -ne 0) {
-    $issueOutput = & fly ssh issue -a nepxy-staging 2>&1
+$machineId = Get-MachineId $appName
+
+$prevErrorAction = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+try {
+    & fly ssh issue $appName 2>&1 | Out-Null
+} catch {
+    Write-Host "fly ssh issue failed; continuing without refreshing SSH cert." -ForegroundColor Yellow
+} finally {
+    $ErrorActionPreference = $prevErrorAction
 }
 
-$secretsOutput = & fly secrets list --app nepxy-staging 2>&1
+$secretsOutput = & fly secrets list --app $appName 2>&1
 if ($LASTEXITCODE -ne 0) {
-    $secretsOutput = & fly secrets list -a nepxy-staging 2>&1
+    $secretsOutput = & fly secrets list -a $appName 2>&1
 }
 
 $cmd = 'sh -lc ''echo STAGING_GATE_KEY="$STAGING_GATE_KEY"; echo STAGING_USER_EMAIL="$STAGING_USER_EMAIL"; echo STAGING_USER_PASSWORD="$STAGING_USER_PASSWORD"; echo STAGING_ADMIN_EMAIL="$STAGING_ADMIN_EMAIL"; echo STAGING_ADMIN_PASSWORD="$STAGING_ADMIN_PASSWORD"; echo USER_EMAIL="$USER_EMAIL"; echo USER_PASSWORD="$USER_PASSWORD"; echo ADMIN_EMAIL="$ADMIN_EMAIL"; echo ADMIN_PASSWORD="$ADMIN_PASSWORD"; echo TMONEY_WEBHOOK_SECRET="$TMONEY_WEBHOOK_SECRET"; echo THUNES_WEBHOOK_SECRET="$THUNES_WEBHOOK_SECRET"; echo BOOTSTRAP_ADMIN_SECRET="$BOOTSTRAP_ADMIN_SECRET"'''
-$flyOutput = & fly ssh console --app nepxy-staging -C $cmd 2>&1
+$prevErrorAction = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+$flyOutput = & fly ssh console --app $appName --machine $machineId -C $cmd 2>&1
 $exitCode = $LASTEXITCODE
-if ($exitCode -ne 0 -and ($flyOutput -join "`n") -match "unknown flag: --app") {
-    $flyOutput = & fly ssh console -a nepxy-staging -C $cmd 2>&1
-    $exitCode = $LASTEXITCODE
-}
+$ErrorActionPreference = $prevErrorAction
 $rawOutput = $flyOutput -join "`n"
 
 if (-not $rawOutput) {
