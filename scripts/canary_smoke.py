@@ -136,6 +136,39 @@ def _login_once(base_url, email, password):
     return {"resp": resp, "token": token, "detail": detail}
 
 
+def login_with_optional_bootstrap(
+    base_url,
+    email,
+    password,
+    bootstrap_secret,
+    *,
+    base_email=None,
+    base_password=None,
+):
+    login = _login_once(base_url, email, password)
+    if login["token"]:
+        return login["token"]
+    if not (
+        login["resp"] is not None
+        and login["resp"].status_code == 401
+        and login["detail"] == "INVALID_CREDENTIALS"
+    ):
+        return None
+    if os.getenv("CANARY_ALLOW_BOOTSTRAP") != "1":
+        return None
+    headers = {}
+    if bootstrap_secret:
+        headers["X-Bootstrap-Admin-Secret"] = bootstrap_secret
+    staging_key = os.getenv("STAGING_GATE_KEY")
+    if staging_key:
+        headers["X-Staging-Key"] = staging_key
+    maybe_bootstrap_users(base_url=base_url, headers=headers)
+    retry_email = base_email or email
+    retry_password = base_password or password
+    retry = _login_once(base_url, retry_email, retry_password)
+    return retry["token"]
+
+
 def bootstrap_and_verify_credentials(
     base_url,
     bootstrap_secret,
@@ -189,6 +222,34 @@ def bootstrap_and_verify_credentials(
         die("Invalid credentials for STAGING_ADMIN_EMAIL/STAGING_ADMIN_PASSWORD")
 
     return True
+
+
+def maybe_bootstrap_users(*, base_url: str, headers: dict) -> dict | None:
+    """
+    Back-compat shim for tests/tools that patch maybe_bootstrap_users.
+    Returns a dict on success, None if skipped.
+    """
+    safe_headers = headers or {}
+    bootstrap_secret = safe_headers.get("X-Bootstrap-Admin-Secret") or os.getenv(
+        "BOOTSTRAP_ADMIN_SECRET"
+    )
+    staging_key = safe_headers.get("X-Staging-Key") or os.getenv("STAGING_GATE_KEY")
+    user_email = os.getenv("STAGING_USER_EMAIL")
+    user_password = os.getenv("STAGING_USER_PASSWORD")
+    admin_email = os.getenv("STAGING_ADMIN_EMAIL")
+    admin_password = os.getenv("STAGING_ADMIN_PASSWORD")
+    bootstrapped = bootstrap_and_verify_credentials(
+        base_url,
+        bootstrap_secret,
+        staging_key,
+        user_email,
+        user_password,
+        admin_email,
+        admin_password,
+    )
+    if not bootstrapped:
+        return None
+    return {"mode": "staging-users", "info": {}}
 
 
 def main():
@@ -290,6 +351,11 @@ def main():
     bootstrap_ready = bootstrap_preflight(base_url, bootstrap_secret)
     allow_bootstrap = os.getenv("CANARY_ALLOW_BOOTSTRAP") == "1"
     staging_key = os.getenv("STAGING_GATE_KEY")
+    bootstrap_headers = {}
+    if bootstrap_secret:
+        bootstrap_headers["X-Bootstrap-Admin-Secret"] = bootstrap_secret
+    if staging_key:
+        bootstrap_headers["X-Staging-Key"] = staging_key
 
     step("Login user")
     user_login = _login_once(base_url, user_email, user_password)
@@ -306,15 +372,7 @@ def main():
             and bootstrap_secret
         ):
             print("Login failed with INVALID_CREDENTIALS; attempting bootstrap")
-            bootstrap_and_verify_credentials(
-                base_url,
-                bootstrap_secret,
-                staging_key,
-                user_email,
-                user_password,
-                admin_email,
-                admin_password,
-            )
+            maybe_bootstrap_users(base_url=base_url, headers=bootstrap_headers)
             user_login = _login_once(base_url, user_email, user_password)
             if user_login["resp"] is not None:
                 _print_request_id(user_login["resp"], "Login user (retry)")
@@ -340,15 +398,7 @@ def main():
             and bootstrap_secret
         ):
             print("Login failed with INVALID_CREDENTIALS; attempting bootstrap")
-            bootstrap_and_verify_credentials(
-                base_url,
-                bootstrap_secret,
-                staging_key,
-                user_email,
-                user_password,
-                admin_email,
-                admin_password,
-            )
+            maybe_bootstrap_users(base_url=base_url, headers=bootstrap_headers)
             admin_login = _login_once(base_url, admin_email, admin_password)
             if admin_login["resp"] is not None:
                 _print_request_id(admin_login["resp"], "Login admin (retry)")
