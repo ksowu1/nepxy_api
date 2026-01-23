@@ -57,6 +57,14 @@ def _serialize_payout(row: dict[str, Any]) -> dict[str, Any]:
         "updated_at": row["updated_at"].isoformat() if row.get("updated_at") else None,
     }
 
+def _provider_aliases(provider: str | None) -> list[str]:
+    if not provider:
+        return []
+    p = provider.strip().upper()
+    if p in {"MOMO", "MTN_MOMO"}:
+        return ["MOMO", "MTN_MOMO"]
+    return [p]
+
 
 @router.post("/payouts/{transaction_id}/confirmed")
 def admin_mark_payout_confirmed(transaction_id: str, admin: CurrentUser = Depends(require_admin)):
@@ -263,7 +271,7 @@ def admin_list_payout_webhook_events(
           received_at,
           COALESCE(payload_json, payload) AS payload_json
         FROM app.webhook_events
-        WHERE provider = %s
+        WHERE provider = ANY(%s)
           AND (external_ref = %s OR provider_ref = %s)
         ORDER BY received_at DESC
         LIMIT %s
@@ -277,10 +285,13 @@ def admin_list_payout_webhook_events(
                 raise HTTPException(status_code=404, detail="Payout not found")
 
             payout_external_ref = payout.get("external_ref") or f"ext-{transaction_id}"
+            providers = _provider_aliases(payout.get("provider"))
+            if not providers:
+                providers = ["UNKNOWN"]
             cur.execute(
                 events_sql,
                 (
-                    payout["provider"],
+                    providers,
                     payout_external_ref,
                     payout.get("provider_ref"),
                     limit,

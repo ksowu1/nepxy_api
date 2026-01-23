@@ -7,7 +7,7 @@ from datetime import date
 
 from fastapi.testclient import TestClient
 
-from tests.conftest import _auth_headers, AuthedUser
+from tests.conftest import _auth_headers, AuthedUser, _cash_in_momo
 
 
 def _cash_out(client: TestClient, token: str, wallet_id: str) -> str:
@@ -38,6 +38,7 @@ def _read_csv(text: str) -> list[list[str]]:
 def test_admin_exports_csv_returns_rows(
     client: TestClient, admin: AuthedUser, user1: AuthedUser, wallet1_xof: str
 ):
+    _cash_in_momo(client, user1.token, wallet1_xof, amount_cents=2000)
     _cash_out(client, user1.token, wallet1_xof)
     today = date.today().isoformat()
 
