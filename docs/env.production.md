@@ -56,6 +56,15 @@ Each entry includes what it controls and where it is used in code.
 | LOG_LEVEL | no | `INFO` | Log verbosity (not wired; default logging config). | not referenced in app code |
 | SENTRY_DSN | no | `https://public@o0.ingest.sentry.io/0` | Error reporting (not wired). | not referenced in app code |
 
+## Rate Limiting
+
+| Name | Required? | Example | What it controls | Where used |
+| --- | --- | --- | --- | --- |
+| RATE_LIMIT_ENABLED | no | `true` | Enable in-memory rate limiting. | `rate_limit.py:rate_limit_enabled`, `middleware.py:RateLimitMiddleware` |
+| RATE_LIMIT_LOGIN_PER_MIN | no | `10` | Per-IP login/refresh limit per minute. | `rate_limit.py:rate_limit_login_per_min`, `middleware.py:RateLimitMiddleware` |
+| RATE_LIMIT_MONEY_PER_MIN | no | `30` | Per-IP cash-out limit per minute. | `rate_limit.py:rate_limit_money_per_min`, `middleware.py:RateLimitMiddleware` |
+| RATE_LIMIT_WEBHOOKS_PER_MIN | no | `120` | Per-IP webhook limit per minute. | `rate_limit.py:rate_limit_webhooks_per_min`, `middleware.py:RateLimitMiddleware` |
+
 ## Fly/Runtime
 
 | Name | Required? | Example | What it controls | Where used |

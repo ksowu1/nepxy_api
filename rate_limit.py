@@ -46,7 +46,8 @@ _limiter = InMemoryRateLimiter()
 
 
 def rate_limit_enabled() -> bool:
-    return (os.getenv("RATE_LIMIT_ENABLED") or "0").strip() == "1"
+    raw = (os.getenv("RATE_LIMIT_ENABLED") or "0").strip().lower()
+    return raw in {"1", "true", "yes"}
 
 
 def rate_limit_login_per_min() -> int:
@@ -57,6 +58,11 @@ def rate_limit_login_per_min() -> int:
 def rate_limit_money_per_min() -> int:
     raw = (os.getenv("RATE_LIMIT_MONEY_PER_MIN") or "30").strip()
     return int(raw) if raw.isdigit() else 30
+
+
+def rate_limit_webhooks_per_min() -> int:
+    raw = (os.getenv("RATE_LIMIT_WEBHOOKS_PER_MIN") or "120").strip()
+    return int(raw) if raw.isdigit() else 120
 
 
 def rate_limit_or_429(*, key: str, limit: int, window_seconds: int) -> None:

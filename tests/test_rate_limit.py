@@ -33,3 +33,21 @@ def test_rate_limit_enabled_exceeding_limit_429(monkeypatch):
     assert err.status_code == 429
     assert err.detail == "RATE_LIMITED"
     assert err.headers and "Retry-After" in err.headers
+
+
+def test_rate_limit_middleware_returns_request_id(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from main import create_app
+
+    monkeypatch.setenv("RATE_LIMIT_ENABLED", "true")
+    monkeypatch.setenv("RATE_LIMIT_LOGIN_PER_MIN", "1")
+    rate_limit._limiter = rate_limit.InMemoryRateLimiter()
+
+    app = create_app()
+    client = TestClient(app, raise_server_exceptions=False)
+
+    client.post("/v1/auth/refresh")
+    r = client.post("/v1/auth/refresh")
+    assert r.status_code == 429, r.text
+    assert r.headers.get("X-Request-ID")

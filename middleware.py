@@ -7,7 +7,7 @@ from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from rate_limit import allow_token_bucket
+from rate_limit import allow_token_bucket, rate_limit_enabled, rate_limit_login_per_min, rate_limit_money_per_min, rate_limit_webhooks_per_min
 from services.metrics import increment_http_requests
 from settings import settings
 
@@ -122,30 +122,38 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         self,
         app,
         *,
-        auth_limit: int = 120,
         auth_window_seconds: int = 60,
-        webhook_limit: int = 300,
+        cashout_window_seconds: int = 60,
         webhook_window_seconds: int = 60,
     ):
         super().__init__(app)
-        self.auth_limit = int(auth_limit)
         self.auth_window_seconds = int(auth_window_seconds)
-        self.webhook_limit = int(webhook_limit)
+        self.cashout_window_seconds = int(cashout_window_seconds)
         self.webhook_window_seconds = int(webhook_window_seconds)
 
     async def dispatch(self, request: Request, call_next):
+        if not rate_limit_enabled():
+            return await call_next(request)
+
         path = request.url.path or ""
+        limit = None
+        window = None
         group = None
-        if path.startswith("/v1/auth/"):
+
+        if path.startswith("/v1/auth/login") or path.startswith("/v1/auth/refresh"):
             group = "auth"
-            limit = self.auth_limit
+            limit = rate_limit_login_per_min()
             window = self.auth_window_seconds
-        elif path.startswith("/v1/webhooks/"):
+        elif path.startswith("/v1/cash-out/"):
+            group = "cashout"
+            limit = rate_limit_money_per_min()
+            window = self.cashout_window_seconds
+        elif path.startswith("/v1/webhooks/") or path.startswith("/webhooks/"):
             group = "webhooks"
-            limit = self.webhook_limit
+            limit = rate_limit_webhooks_per_min()
             window = self.webhook_window_seconds
 
-        if not group:
+        if not group or not limit:
             return await call_next(request)
 
         client = request.client.host if request.client else "unknown"
