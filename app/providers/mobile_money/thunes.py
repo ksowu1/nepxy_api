@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 import requests
+import logging
 
 from settings import settings
 from app.providers.base import ProviderResult
@@ -47,6 +48,8 @@ class ThunesProvider:
 
         self.use_simulation = bool(getattr(settings, "THUNES_USE_SIMULATION", True)) and self.mode == "sandbox"
         self.timeout_s = float(getattr(settings, "MM_HTTP_TIMEOUT_S", 20.0))
+        if self.use_simulation:
+            logger.info("thunes sandbox simulation headers enabled")
 
     def _auth(self):
         # Thunes uses Basic Authentication: -u API_KEY:API_SECRET  :contentReference[oaicite:11]{index=11}
@@ -60,6 +63,9 @@ class ThunesProvider:
             # Thunes supports x-simulated-transaction=true for sandbox simulation :contentReference[oaicite:12]{index=12}
             h["x-simulated-transaction"] = "true"
         return h
+
+    def _build_headers(self) -> Dict[str, str]:
+        return self._headers()
 
     @staticmethod
     def map_thunes_status(status_raw: str) -> tuple[str, bool, str | None]:
@@ -267,6 +273,32 @@ class ThunesProvider:
                     "http_status": c_resp.status_code,
                     "quotation_id": quotation_id,
                     "transaction_id": transaction_id,
+                    "quote_request": q_payload,
+                    "transaction_request": t_payload,
+                    "quote_response": {
+                        "http_status": q_resp.status_code,
+                        "data": q_data,
+                        "request_url": q_url,
+                    },
+                    "quote_meta": {
+                        "fee": q_data.get("fee"),
+                        "rate": q_data.get("rate"),
+                    },
+                    "transaction_response": {
+                        "http_status": t_resp.status_code,
+                        "data": t_data,
+                        "request_url": t_url,
+                    },
+                    "transaction_create_response": {
+                        "http_status": t_resp.status_code,
+                        "data": t_data,
+                        "request_url": t_url,
+                    },
+                    "confirm_response": {
+                        "http_status": c_resp.status_code,
+                        "data": c_data,
+                        "request_url": c_url,
+                    },
                     "data": c_data,
                     "request_url": c_url,
                 },
@@ -400,3 +432,4 @@ def _safe_json(resp) -> Dict[str, Any]:
         return j if isinstance(j, dict) else {"raw": j}
     except Exception:
         return {"raw_text": getattr(resp, "text", "")}
+logger = logging.getLogger("nexapay.thunes")
