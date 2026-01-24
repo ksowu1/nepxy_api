@@ -31,7 +31,7 @@ jobs:
       ENV: test
       MM_MODE: sandbox
       MM_ENABLED_PROVIDERS: TMONEY,FLOOZ,MOMO,MTN_MOMO,THUNES
-      MM_STRICT_STARTUP_VALIDATION: false
+      MM_STRICT_STARTUP_VALIDATION: "false"
 
     steps:
       - name: Checkout code
@@ -58,5 +58,10 @@ jobs:
           alembic upgrade head
 
       - name: Run tests
+        env:
+          # IMPORTANT: mount /debug routes in CI so tests like /debug/me pass
+          ENV: dev
+          # Optional if your app checks ENVIRONMENT too
+          ENVIRONMENT: dev
         run: |
           pytest -q --disable-warnings --maxfail=1
