@@ -323,14 +323,15 @@ async def _handle_mobile_money_webhook(req: Request, *, provider: str):
     if request_id:
         req.state.request_id = request_id
 
-    def _log_summary(signature_valid: bool, reason: str | None = None) -> None:
+    def _log_summary(signature_valid: bool, reason: str | None = None, payout_id: str | None = None) -> None:
         logger.info(
-            "webhook_received request_id=%s provider=%s signature_valid=%s provider_ref=%s external_ref=%s status_raw=%s reason=%s",
+            "webhook_received request_id=%s provider=%s signature_valid=%s provider_ref=%s external_ref=%s payout_id=%s status_raw=%s reason=%s",
             request_id,
             provider,
             signature_valid,
             redact_text(provider_ref or ""),
             redact_text(external_ref or ""),
+            payout_id,
             redact_text(status_raw or ""),
             reason,
         )
@@ -547,7 +548,7 @@ async def _handle_mobile_money_webhook(req: Request, *, provider: str):
             ignored = True
             ignore_reason = "PAYOUT_NOT_FOUND"
 
-            _log_summary(True, ignore_reason)
+            _log_summary(True, ignore_reason, payout_id=None)
             _log_both_tables(
                 conn,
                 provider=provider,
@@ -632,7 +633,7 @@ async def _handle_mobile_money_webhook(req: Request, *, provider: str):
 
         conn.commit()
 
-    _log_summary(True, unsigned_reason)
+    _log_summary(True, unsigned_reason, payout_id=str(tx_id) if tx_id else None)
     resp = {
         "ok": True,
         "provider": provider,

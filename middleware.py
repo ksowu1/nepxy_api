@@ -10,6 +10,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from rate_limit import allow_token_bucket
 from services.metrics import increment_http_requests
 from settings import settings
+from services.observability import set_request_id
 
 logger = logging.getLogger("nexapay.http")
 
@@ -54,6 +55,7 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
 
         # attach to request state
         request.state.request_id = req_id
+        set_request_id(req_id)
         logger.info(
             "http_request_start request_id=%s method=%s path=%s",
             req_id,
@@ -67,6 +69,16 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
         except HTTPException as exc:
             headers = dict(getattr(exc, "headers", None) or {})
             response = JSONResponse(status_code=exc.status_code, content={"detail": exc.detail}, headers=headers)
+            error_code, reason = _extract_error_info(exc.detail)
+            logger.warning(
+                "http_request_error request_id=%s method=%s path=%s http_status=%s error_code=%s reason=%s",
+                req_id,
+                request.method,
+                request.url.path,
+                exc.status_code,
+                error_code,
+                reason,
+            )
         except Exception:
             logger.exception(
                 "http_request error request_id=%s method=%s path=%s",
@@ -86,8 +98,10 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
                 increment_http_requests(route, status)
 
             logger.info(
-                "http_request_end request_id=%s status=%s duration_ms=%s",
+                "http_request_end request_id=%s method=%s path=%s status=%s duration_ms=%s",
                 req_id,
+                request.method,
+                request.url.path,
                 status,
                 duration_ms,
             )
@@ -191,3 +205,29 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 def _maintenance_enabled() -> bool:
     raw = (os.getenv("MAINTENANCE_MODE") or "0").strip().lower()
     return raw in {"1", "true"}
+
+
+def _extract_error_info(detail) -> tuple[str | None, str | None]:
+    error_code = None
+    reason = None
+    if isinstance(detail, dict):
+        error_code = detail.get("error") or detail.get("detail") or detail.get("code")
+        reason = detail.get("reason") or detail.get("message") or None
+        if reason is None:
+            reason = str(detail)
+    elif isinstance(detail, str):
+        error_code = detail
+        reason = detail
+    else:
+        error_code = str(detail)
+        reason = str(detail)
+
+    if error_code in {
+        "INVALID_CREDENTIALS",
+        "STAGING_GATE_KEY_REQUIRED",
+        "INVALID_SIGNATURE",
+        "PROVIDER_TIMEOUT",
+        "PROVIDER_REJECTED",
+    }:
+        return error_code, reason
+    return error_code, reason

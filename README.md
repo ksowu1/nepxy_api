@@ -135,3 +135,7 @@ See `docs/BACKUPS.md` for backup/restore procedures.
 - Staging guide: `docs/staging.md`
 - Rollback runbook: `docs/runbooks/rollback.md`
 - Incident triage: `docs/runbooks/incident-triage.md`
+
+\## Observability
+
+- See `docs/observability.md` for request tracing and log queries.

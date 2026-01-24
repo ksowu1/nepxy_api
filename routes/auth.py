@@ -3,6 +3,7 @@
 
 # routes/auth.py
 from fastapi import APIRouter, HTTPException, Request
+import logging
 from pydantic import BaseModel, EmailStr
 from uuid import UUID
 
@@ -20,6 +21,7 @@ from services.invite_only import is_email_allowed, is_invite_only_enabled
 from rate_limit import rate_limit_enabled, rate_limit_login_per_min, rate_limit_or_429
 
 router = APIRouter(prefix="/v1/auth", tags=["auth"])
+logger = logging.getLogger("nexapay.auth")
 
 
 class LoginRequest(BaseModel):
@@ -75,11 +77,21 @@ def login(body: LoginRequest, req: Request):
             row = cur.fetchone()
 
     if not row:
+        logger.info(
+            "auth_login_invalid request_id=%s email=%s",
+            getattr(req.state, "request_id", None),
+            str(body.email),
+        )
         raise HTTPException(status_code=401, detail="INVALID_CREDENTIALS")
 
     user_id, password_hash_db = row
 
     if not verify_password(body.password, password_hash_db):
+        logger.info(
+            "auth_login_invalid request_id=%s email=%s",
+            getattr(req.state, "request_id", None),
+            str(body.email),
+        )
         raise HTTPException(status_code=401, detail="INVALID_CREDENTIALS")
 
     access = create_access_token(sub=str(user_id))
@@ -88,9 +100,13 @@ def login(body: LoginRequest, req: Request):
 
 
 @router.post("/refresh", response_model=RefreshResponse)
-def refresh(body: RefreshRequest):
+def refresh(body: RefreshRequest, req: Request):
     user_id = validate_refresh_token(body.refresh_token)
     if not user_id:
+        logger.info(
+            "auth_refresh_invalid request_id=%s",
+            getattr(req.state, "request_id", None),
+        )
         raise HTTPException(status_code=401, detail="INVALID_REFRESH_TOKEN")
 
     access = create_access_token(sub=str(user_id))
