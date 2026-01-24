@@ -17,6 +17,7 @@ def test_debug_router_mounted_in_staging(monkeypatch):
 
 
 def test_debug_router_not_mounted_in_prod(monkeypatch):
+    monkeypatch.setenv("ENV", "prod")
     monkeypatch.setenv("ENVIRONMENT", "prod")
     monkeypatch.delenv("STAGING_GATE_KEY", raising=False)
     app = create_app()
