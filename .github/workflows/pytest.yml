@@ -2,12 +2,13 @@ name: Pytest
 
 on:
   push:
-    branches: [ main, fix/**, feat/** ]
+    branches: [ main ]
   pull_request:
     branches: [ main ]
 
 jobs:
   test:
+    name: test
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -15,19 +16,19 @@ jobs:
       postgres:
         image: postgres:16
         env:
-          POSTGRES_USER: nepxy
-          POSTGRES_PASSWORD: nepxy
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
           POSTGRES_DB: nepxy_test
         ports:
           - 5432:5432
         options: >-
-          --health-cmd="pg_isready -U nepxy"
+          --health-cmd="pg_isready -U postgres -d nepxy_test"
           --health-interval=10s
           --health-timeout=5s
           --health-retries=5
 
     env:
-      DATABASE_URL: postgresql://nepxy:nepxy@localhost:5432/nepxy_test
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/nepxy_test
       ENV: test
       MM_MODE: sandbox
       MM_ENABLED_PROVIDERS: TMONEY,FLOOZ,MOMO,MTN_MOMO,THUNES
@@ -46,17 +47,37 @@ jobs:
       - name: Install system deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential libpq-dev
+          sudo apt-get install -y build-essential libpq-dev postgresql-client
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run migrations
+      - name: Wait for Postgres
         run: |
-          alembic upgrade head
+          for i in {1..30}; do
+            pg_isready -h localhost -U postgres -d nepxy_test && exit 0
+            sleep 1
+          done
+          echo "Postgres not ready" >&2
+          exit 1
+
+      - name: Load schema
+        run: |
+          psql "$DATABASE_URL" -f db/schema_v1.sql
+
+      - name: Seed cashout limits
+        run: |
+          psql "$DATABASE_URL" -c "INSERT INTO limits.account_limits (kyc_tier, daily_send_cents, monthly_send_cents, daily_cashout_cents, is_active) VALUES (1, 1000000, 5000000, 1000000, TRUE), (2, 2500000, 15000000, 2500000, TRUE) ON CONFLICT (kyc_tier) DO NOTHING;"
+
+      - name: Syntax check
+        run: |
+          python -m compileall -q . -x "(_migrate_webhook_events_signature_valid\\.py|tmp_register\\.py)$"
 
       - name: Run tests
+        env:
+          ENV: dev
+          ENVIRONMENT: dev
         run: |
           pytest -q --disable-warnings --maxfail=1

@@ -1,20 +1,95 @@
-name: Fly Deploy (staging)
+name: Deploy Staging
 
 on:
   push:
     branches: [ main ]
+  workflow_dispatch:
 
 jobs:
-  deploy:
+  test:
     runs-on: ubuntu-latest
-    needs: [ ]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run tests
+        run: |
+          python -m pytest -q
+
+  deploy_staging:
+    runs-on: ubuntu-latest
+    needs: [ test ]
     steps:
       - uses: actions/checkout@v4
 
       - uses: superfly/flyctl-actions/setup-flyctl@v1
 
-      - name: Deploy to Fly
+      - name: Deploy to Fly (staging)
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
           fly deploy --app nepxy-staging --remote-only
+
+      - name: Wait for health
+        env:
+          STAGING_BASE_URL: ${{ secrets.STAGING_BASE_URL }}
+          STAGING_GATE_KEY: ${{ secrets.STAGING_GATE_KEY }}
+        run: |
+          if [ -z "${STAGING_BASE_URL:-}" ]; then
+            echo "Missing STAGING_BASE_URL for health check" >&2
+            exit 1
+          fi
+          for i in {1..30}; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" -H "X-Staging-Key: ${STAGING_GATE_KEY:-}" "${STAGING_BASE_URL}/health" || true)
+            if [ "$code" = "200" ]; then
+              echo "Health check OK"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Health check failed" >&2
+          exit 1
+
+  canary:
+    name: canary
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [ deploy_staging ]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Canary smoke (staging)
+        env:
+          STAGING_BASE_URL: ${{ secrets.STAGING_BASE_URL }}
+          STAGING_GATE_KEY: ${{ secrets.STAGING_GATE_KEY }}
+          STAGING_USER_EMAIL: ${{ secrets.STAGING_USER_EMAIL }}
+          STAGING_USER_PASSWORD: ${{ secrets.STAGING_USER_PASSWORD }}
+          STAGING_ADMIN_EMAIL: ${{ secrets.STAGING_ADMIN_EMAIL }}
+          STAGING_ADMIN_PASSWORD: ${{ secrets.STAGING_ADMIN_PASSWORD }}
+          TMONEY_WEBHOOK_SECRET: ${{ secrets.TMONEY_WEBHOOK_SECRET }}
+          BOOTSTRAP_ADMIN_SECRET: ${{ secrets.BOOTSTRAP_ADMIN_SECRET }}
+          CANARY_ALLOW_BOOTSTRAP: "1"
+        run: |
+          python scripts/canary_smoke.py

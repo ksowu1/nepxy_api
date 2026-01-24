@@ -1,0 +1,10 @@
+- [ ] `python -m pytest -q`
+- [ ] Run staging canary: `python scripts/canary_smoke.py` (see `docs/runbooks/staging_canary.md`)
+- [ ] Confirm webhooks, payouts, admin webhook-events are green in staging
+- [ ] `git status` clean
+- [ ] Push + tag + backup:
+  - `git push`
+  - `git tag <tag>`
+  - `git push --tags`
+  - `git backup`
+  - `git backup-tags`

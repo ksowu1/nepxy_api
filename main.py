@@ -41,9 +41,12 @@ from middleware import (
     RateLimitMiddleware,
     SecurityHeadersMiddleware,
     StagingGateMiddleware,
+    MaintenanceModeMiddleware,
 )
 
 logger = logging.getLogger("nexapay")
+DEFAULT_HOST = "0.0.0.0"
+DEFAULT_PORT = 8001
 
 
 def _configure_logging_once() -> None:
@@ -96,6 +99,18 @@ def _cors_origins() -> List[str]:
     ]
 
 
+def _runtime_env() -> str:
+    env = (os.getenv("ENV") or os.getenv("ENVIRONMENT") or settings.ENV or "dev").strip().lower()
+    return env or "dev"
+
+
+def _resolve_port() -> int:
+    raw = (os.getenv("PORT") or "").strip()
+    if raw.isdigit():
+        return int(raw)
+    return DEFAULT_PORT
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _configure_logging_once()
@@ -106,6 +121,12 @@ async def lifespan(app: FastAPI):
 
     validate_env_settings()
 
+    logger.info(
+        "BOOT NepXy API | host=%s | port=%s | env=%s",
+        DEFAULT_HOST,
+        _resolve_port(),
+        settings.ENV,
+    )
     logger.info(
         "BOOT NepXy API | MM_MODE=%s | MM_STRICT_STARTUP_VALIDATION=%s | MM_ENABLED_PROVIDERS=%s",
         mode,
@@ -125,6 +146,7 @@ def create_app() -> FastAPI:
 
     app.add_middleware(StagingGateMiddleware)
     app.add_middleware(RateLimitMiddleware)
+    app.add_middleware(MaintenanceModeMiddleware)
     app.add_middleware(RequestContextMiddleware)
     app.add_middleware(SecurityHeadersMiddleware)
 
@@ -160,9 +182,13 @@ def create_app() -> FastAPI:
     app.include_router(metrics_router)
     app.include_router(catalog_router)
 
-    # dev-only helpers
-    app.include_router(debug_router)
-    app.include_router(mock_tmoney_router)
+    # dev/staging helpers
+    env = _runtime_env()
+    staging_gate = (os.getenv("STAGING_GATE_KEY") or "").strip()
+    if env in {"dev", "staging", "test"}:
+        app.include_router(debug_router)
+    if env in {"dev", "staging"} or staging_gate:
+        app.include_router(mock_tmoney_router)
 
     @app.exception_handler(Exception)
     async def unhandled_error_handler(request: Request, exc: Exception):
