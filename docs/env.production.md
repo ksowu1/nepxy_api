@@ -1,71 +1,98 @@
-# Nepxy Production Environment Variables
+# Nepxy API Production Environment Variables
 
-This document lists required and optional environment variables for Nepxy.
-Each entry includes what it controls and where it is used in code.
+Use this as the source of truth for required/optional env vars in production.
+Never commit secrets. Store them in Fly secrets (or your platform's secret store).
+
+Notes:
+- Staging gate header is `X-Staging-Key` (staging only).
+- In staging, `/health` requires `X-Staging-Key`.
+- Debug routes live under `/debug` and should be disabled in prod.
 
 ## Core
 
-| Name | Required? | Example | What it controls | Where used |
-| --- | --- | --- | --- | --- |
-| ENV | yes | `prod` | Runtime environment (dev/staging/prod/test). | `settings.py:ENV`, `main.py:_runtime_env` |
-| ENVIRONMENT | no | `prod` | Alternate env var name for ENV. | `main.py:_runtime_env`, `middleware.py:StagingGateMiddleware` |
-| APP_NAME | no | `nepxy-api` | Deployment label for ops and tooling. | not referenced in app code |
-| BASE_URL | no | `https://api.nepxy.example` | Base URL used by scripts/tools. | `scripts/run_smoke.ps1`, `scripts/smoke_dev.py` |
-| JWT_SECRET | yes | `change-me-32chars-min` | JWT signing key. | `security.py:create_access_token`, `settings.py:JWT_SECRET` |
-| ACCESS_TOKEN_TTL_SECONDS | no | `3600` | Access token TTL (not wired; see JWT_ACCESS_MINUTES). | not referenced in app code |
-| REFRESH_TOKEN_TTL_SECONDS | no | `2592000` | Refresh token TTL (not wired; see JWT_REFRESH_DAYS). | not referenced in app code |
-| JWT_ACCESS_MINUTES | yes | `60` | Access token TTL in minutes. | `security.py:create_access_token`, `settings.py:JWT_ACCESS_MINUTES` |
-| JWT_REFRESH_DAYS | yes | `30` | Refresh token TTL in days. | `security.py:create_session_refresh_token`, `settings.py:JWT_REFRESH_DAYS` |
+| Name | Required? | Example | Safe default | What it controls | Where used |
+| --- | --- | --- | --- | --- | --- |
+| ENV | yes | `prod` | `dev` | Runtime environment. | `settings.py:ENV`, `main.py:_runtime_env` |
+| ENVIRONMENT | no | `prod` | (none) | Alternate env name for ENV. | `main.py:_runtime_env`, `middleware.py:StagingGateMiddleware` |
+| APP_NAME | no | `nepxy-api` | (none) | Deployment label for ops/tools. | not referenced in app code |
+| BASE_URL | no | `https://api.nepxy.example` | (none) | Base URL for scripts/tools. | `scripts/run_smoke.ps1`, `scripts/smoke_dev.py` |
+| PORT | yes (runtime) | `8001` | `8001` | HTTP listen port. | `main.py:_resolve_port`, `Dockerfile` |
+| HOST | no | `0.0.0.0` | `0.0.0.0` | HTTP bind host (set in Dockerfile). | `Dockerfile` |
 
 ## Database
 
-| Name | Required? | Example | What it controls | Where used |
-| --- | --- | --- | --- | --- |
-| DATABASE_URL | yes | `postgresql://user:pass@host:5432/nepxy` | Postgres connection string. | `db.py:init_pool`, `alembic/env.py` |
-| DB_POOL_SIZE | no | `10` | Pool size (not wired; pool uses maxconn=10). | not referenced in app code |
-| DB_POOL_TIMEOUT | no | `5` | Pool connect timeout (not wired; uses `connect_timeout=5`). | not referenced in app code |
+| Name | Required? | Example | Safe default | What it controls | Where used |
+| --- | --- | --- | --- | --- | --- |
+| DATABASE_URL | yes | `postgresql://user:pass@host:5432/nepxy` | (none) | Postgres DSN. | `db.py:init_pool`, `alembic/env.py` |
+| DB_POOL_SIZE | no | `10` | (none) | Pool size (not wired; maxconn=10 is hardcoded). | not referenced in app code |
+| DB_POOL_TIMEOUT | no | `5` | (none) | Pool connect timeout (not wired; connect_timeout=5 is hardcoded). | not referenced in app code |
 
-## Staging Gate
+## Auth / JWT
 
-| Name | Required? | Example | What it controls | Where used |
-| --- | --- | --- | --- | --- |
-| STAGING_GATE_KEY | yes (staging only) | `staging-gate-secret` | Gate key to restrict staging traffic. | `middleware.py:StagingGateMiddleware` |
-| X-Staging-Key (header) | yes (staging only) | `X-Staging-Key: <key>` | Request header used with STAGING_GATE_KEY. | `middleware.py:StagingGateMiddleware` |
+| Name | Required? | Example | Safe default | What it controls | Where used |
+| --- | --- | --- | --- | --- | --- |
+| JWT_SECRET | yes | `change-me-32chars-min` | (none) | JWT signing key. | `security.py:create_access_token`, `settings.py:JWT_SECRET` |
+| JWT_ALG | no | `HS256` | `HS256` | JWT signing algorithm. | `settings.py:JWT_ALG` |
+| JWT_ACCESS_MINUTES | yes | `60` | `60` | Access token TTL (minutes). | `security.py:create_access_token`, `settings.py:JWT_ACCESS_MINUTES` |
+| JWT_REFRESH_DAYS | yes | `30` | `30` | Refresh token TTL (days). | `security.py:create_session_refresh_token`, `settings.py:JWT_REFRESH_DAYS` |
+| ACCESS_TOKEN_TTL_SECONDS | no | `3600` | (none) | Placeholder only (not wired). | not referenced in app code |
+| REFRESH_TOKEN_TTL_SECONDS | no | `2592000` | (none) | Placeholder only (not wired). | not referenced in app code |
 
-## Bootstrap (dev/staging only)
+## Mobile Money (Global)
 
-| Name | Required? | Example | What it controls | Where used |
-| --- | --- | --- | --- | --- |
-| BOOTSTRAP_ADMIN_SECRET | yes (staging/dev) | `bootstrap-admin-secret` | Enables debug bootstrap endpoints. | `routes/debug.py`, `scripts/canary_smoke.py` |
+| Name | Required? | Example | Safe default | What it controls | Where used |
+| --- | --- | --- | --- | --- | --- |
+| MM_MODE | yes | `real` | `sandbox` | Provider mode. | `settings.py:MM_MODE`, `app/providers/mobile_money/config.py:mm_mode` |
+| MM_ENABLED_PROVIDERS | yes | `TMONEY,FLOOZ,MTN_MOMO,THUNES` | (none) | Provider allowlist. | `app/providers/mobile_money/config.py:enabled_providers` |
+| MM_STRICT_STARTUP_VALIDATION | no | `true` | `false` | Enforce strict startup validation. | `app/providers/mobile_money/validate.py` |
+| MM_HTTP_TIMEOUT_S | no | `20.0` | `20.0` | Provider HTTP timeout. | `settings.py:MM_HTTP_TIMEOUT_S` |
+| MOMO_HTTP_TIMEOUT_S | no | `20.0` | `20.0` | MoMo HTTP timeout. | `settings.py:MOMO_HTTP_TIMEOUT_S` |
 
-## Providers: Mobile Money
+## Webhooks (Mobile Money)
 
-| Name | Required? | Example | What it controls | Where used |
-| --- | --- | --- | --- | --- |
-| MM_ENABLED_PROVIDERS | yes | `TMONEY,FLOOZ,MTN_MOMO,THUNES` | Provider allowlist. | `app/providers/mobile_money/config.py:enabled_providers` |
-| TMONEY_WEBHOOK_SECRET | yes (if TMONEY enabled) | `tmoney-secret` | TMONEY webhook signature secret. | `routes/webhooks.py:_get_secret`, `settings.py:TMONEY_WEBHOOK_SECRET` |
-| THUNES_WEBHOOK_SECRET | yes (if THUNES enabled) | `thunes-secret` | Thunes webhook signature secret. | `routes/webhooks.py:_get_secret`, `settings.py:THUNES_WEBHOOK_SECRET` |
-| THUNES_SANDBOX_API_ENDPOINT | yes (if THUNES sandbox) | `https://api.sandbox.thunes.com` | Thunes v2 API endpoint. | `settings.py:THUNES_SANDBOX_API_ENDPOINT` |
-| THUNES_SANDBOX_API_KEY | yes (if THUNES sandbox) | `thunes-sandbox-key` | Thunes v2 API key. | `settings.py:THUNES_SANDBOX_API_KEY` |
-| THUNES_SANDBOX_API_SECRET | yes (if THUNES sandbox) | `thunes-sandbox-secret` | Thunes v2 API secret. | `settings.py:THUNES_SANDBOX_API_SECRET` |
+| Name | Required? | Example | Safe default | What it controls | Where used |
+| --- | --- | --- | --- | --- | --- |
+| TMONEY_WEBHOOK_SECRET | yes (if TMONEY enabled) | `tmoney-secret` | (none) | TMONEY webhook signature. | `routes/webhooks.py:_get_secret` |
+| FLOOZ_WEBHOOK_SECRET | yes (if FLOOZ enabled) | `flooz-secret` | (none) | FLOOZ webhook signature. | `routes/webhooks.py:_get_secret` |
+| MOMO_WEBHOOK_SECRET | yes (if MTN_MOMO enabled) | `momo-secret` | (none) | MoMo webhook signature. | `routes/webhooks.py:_get_secret` |
+| THUNES_WEBHOOK_SECRET | yes (if THUNES enabled) | `thunes-secret` | (none) | Thunes webhook signature. | `routes/webhooks.py:_get_secret` |
+| THUNES_ALLOW_UNSIGNED_WEBHOOKS | no (prod should be false) | `false` | `true` | Allow unsigned Thunes webhooks (sandbox only). | `routes/webhooks.py` |
+
+## Thunes (Placeholders + Current)
+
+| Name | Required? | Example | Safe default | What it controls | Where used |
+| --- | --- | --- | --- | --- | --- |
+| THUNES_SANDBOX_API_ENDPOINT | placeholder | `https://api.sandbox.thunes.com` | (none) | Thunes v2 API endpoint. | `settings.py:THUNES_SANDBOX_API_ENDPOINT` |
+| THUNES_SANDBOX_API_KEY | placeholder | `thunes-sandbox-key` | (none) | Thunes v2 API key. | `settings.py:THUNES_SANDBOX_API_KEY` |
+| THUNES_SANDBOX_API_SECRET | placeholder | `thunes-sandbox-secret` | (none) | Thunes v2 API secret. | `settings.py:THUNES_SANDBOX_API_SECRET` |
+| THUNES_REAL_API_ENDPOINT | yes (prod, if THUNES enabled) | `https://api.thunes.com` | (none) | Thunes v2 API endpoint. | `settings.py:THUNES_REAL_API_ENDPOINT` |
+| THUNES_REAL_API_KEY | yes (prod, if THUNES enabled) | `thunes-real-key` | (none) | Thunes v2 API key. | `settings.py:THUNES_REAL_API_KEY` |
+| THUNES_REAL_API_SECRET | yes (prod, if THUNES enabled) | `thunes-real-secret` | (none) | Thunes v2 API secret. | `settings.py:THUNES_REAL_API_SECRET` |
+| THUNES_PAYER_ID_GH | yes (if THUNES enabled) | `payer-gh` | (none) | Payer id for GH. | `settings.py:THUNES_PAYER_ID_GH` |
 
 ## Observability
 
-| Name | Required? | Example | What it controls | Where used |
-| --- | --- | --- | --- | --- |
-| LOG_LEVEL | no | `INFO` | Log verbosity (not wired; default logging config). | not referenced in app code |
-| SENTRY_DSN | no | `https://public@o0.ingest.sentry.io/0` | Error reporting (not wired). | not referenced in app code |
+| Name | Required? | Example | Safe default | What it controls | Where used |
+| --- | --- | --- | --- | --- | --- |
+| LOG_LEVEL | no | `INFO` | (none) | Log verbosity (not wired). | not referenced in app code |
+| SENTRY_DSN | no | `https://public@o0.ingest.sentry.io/0` | (none) | Error reporting (not wired). | not referenced in app code |
 
-## Fly/Runtime
+## Email/SMS (Placeholders)
 
-| Name | Required? | Example | What it controls | Where used |
-| --- | --- | --- | --- | --- |
-| PORT | yes (runtime) | `8001` | HTTP listen port. | `main.py:_resolve_port`, `Dockerfile` |
-| HOST | no | `0.0.0.0` | HTTP listen host (not env-wired; set in Dockerfile). | `Dockerfile` |
+| Name | Required? | Example | Safe default | What it controls | Where used |
+| --- | --- | --- | --- | --- | --- |
+| EMAIL_PROVIDER_API_KEY | placeholder | `email-api-key` | (none) | Email provider credentials. | not referenced in app code |
+| SMS_PROVIDER_API_KEY | placeholder | `sms-api-key` | (none) | SMS provider credentials. | not referenced in app code |
 
-## Production Checklist
-- Rotate secrets (JWT + provider secrets) before deploy.
-- Set `ENV=prod` and ensure debug routes are disabled.
-- Confirm healthcheck passes at `/health`.
-- Run migrations against production database.
-- Run staging canary before and after deploy.
+## Staging Gate (staging only)
+
+| Name | Required? | Example | Safe default | What it controls | Where used |
+| --- | --- | --- | --- | --- | --- |
+| STAGING_GATE_KEY | yes (staging) | `staging-gate-secret` | (none) | Staging access gate. | `middleware.py:StagingGateMiddleware` |
+| X-Staging-Key (header) | yes (staging) | `X-Staging-Key: <key>` | (none) | Staging request header. | `middleware.py:StagingGateMiddleware` |
+
+## Bootstrap (dev/staging only)
+
+| Name | Required? | Example | Safe default | What it controls | Where used |
+| --- | --- | --- | --- | --- | --- |
+| BOOTSTRAP_ADMIN_SECRET | yes (staging/dev) | `bootstrap-admin-secret` | (none) | Enables `/debug/bootstrap-*`. | `routes/debug.py`, `scripts/canary_smoke.py` |

@@ -128,3 +128,10 @@ python scripts/canary_smoke.py
 \## Backups
 
 See `docs/BACKUPS.md` for backup/restore procedures.
+
+\## Production notes
+
+- Env var reference: `docs/env.production.md`
+- Staging guide: `docs/staging.md`
+- Rollback runbook: `docs/runbooks/rollback.md`
+- Incident triage: `docs/runbooks/incident-triage.md`
