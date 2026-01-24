@@ -185,7 +185,7 @@ def create_app() -> FastAPI:
     # dev/staging helpers
     env = _runtime_env()
     staging_gate = (os.getenv("STAGING_GATE_KEY") or "").strip()
-    if env in {"dev", "staging"}:
+    if env in {"dev", "staging", "test"}:
         app.include_router(debug_router)
     if env in {"dev", "staging"} or staging_gate:
         app.include_router(mock_tmoney_router)
