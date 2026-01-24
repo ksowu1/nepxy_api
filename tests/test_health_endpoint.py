@@ -28,3 +28,12 @@ def test_health_staging_allows_gate_header(monkeypatch):
     body = r.json()
     assert body.get("ok") is True
     assert body.get("mm_mode") == "sandbox"
+
+
+def test_ready_ok_when_db_available():
+    app = create_app()
+    client = TestClient(app, raise_server_exceptions=False)
+    r = client.get("/ready")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body.get("ok") is True

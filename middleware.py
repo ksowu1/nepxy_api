@@ -7,7 +7,12 @@ from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from rate_limit import allow_token_bucket
+from rate_limit import (
+    allow_token_bucket,
+    rate_limit_enabled,
+    rate_limit_login_per_min,
+    rate_limit_webhook_per_min,
+)
 from services.metrics import increment_http_requests
 from settings import settings
 from services.observability import set_request_id
@@ -52,15 +57,17 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
             or str(uuid.uuid4())
         )
         start = time.time()
+        client_ip = request.client.host if request.client else "unknown"
 
         # attach to request state
         request.state.request_id = req_id
         set_request_id(req_id)
         logger.info(
-            "http_request_start request_id=%s method=%s path=%s",
+            "http_request_start request_id=%s method=%s path=%s client_ip=%s",
             req_id,
             request.method,
             request.url.path,
+            client_ip,
         )
 
         response = None
@@ -98,12 +105,13 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
                 increment_http_requests(route, status)
 
             logger.info(
-                "http_request_end request_id=%s method=%s path=%s status=%s duration_ms=%s",
+                "http_request_end request_id=%s method=%s path=%s status=%s duration_ms=%s client_ip=%s",
                 req_id,
                 request.method,
                 request.url.path,
                 status,
                 duration_ms,
+                client_ip,
             )
         return response
 
@@ -136,22 +144,25 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         self,
         app,
         *,
-        auth_limit: int = 120,
+        auth_limit: int | None = None,
         auth_window_seconds: int = 60,
-        webhook_limit: int = 300,
+        webhook_limit: int | None = None,
         webhook_window_seconds: int = 60,
     ):
         super().__init__(app)
-        self.auth_limit = int(auth_limit)
+        self.auth_limit = int(auth_limit or rate_limit_login_per_min())
         self.auth_window_seconds = int(auth_window_seconds)
-        self.webhook_limit = int(webhook_limit)
+        self.webhook_limit = int(webhook_limit or rate_limit_webhook_per_min())
         self.webhook_window_seconds = int(webhook_window_seconds)
 
     async def dispatch(self, request: Request, call_next):
+        if not rate_limit_enabled():
+            return await call_next(request)
+
         path = request.url.path or ""
         group = None
-        if path.startswith("/v1/auth/"):
-            group = "auth"
+        if path == "/v1/auth/login":
+            group = "login"
             limit = self.auth_limit
             window = self.auth_window_seconds
         elif path.startswith("/v1/webhooks/"):

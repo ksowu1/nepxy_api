@@ -73,17 +73,18 @@ def _cors_origins() -> List[str]:
     """
     Expo web + local dev can run on different ports.
     Keep this permissive in dev, tight in prod.
-    Optionally override via CORS_ALLOW_ORIGINS env (comma-separated).
+    Optionally override via CORS_ORIGINS env (comma-separated).
     """
-    env_origins = _parse_csv_env("CORS_ALLOW_ORIGINS", "") or _parse_csv_env(
+    env = (os.getenv("ENV") or os.getenv("ENVIRONMENT") or settings.ENV or "dev").lower()
+    if env in {"prod", "production"}:
+        prod_origins = _parse_csv_env("CORS_ORIGINS", "")
+        return prod_origins
+
+    env_origins = _parse_csv_env("CORS_ORIGINS", "") or _parse_csv_env(
         settings.CORS_ALLOW_ORIGINS, ""
     )
     if env_origins:
         return env_origins
-
-    env = (settings.ENV or "dev").lower()
-    if env == "prod":
-        return []
 
     # Common Expo + local dev origins
     return [

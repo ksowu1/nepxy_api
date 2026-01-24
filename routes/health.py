@@ -74,6 +74,12 @@ def health():
     }
 
 
+@router.get("/ready")
+def ready():
+    db_ok, _ = _check_db()
+    return {"ok": bool(db_ok)}
+
+
 @router.get("/version")
 def version():
     env_value = _resolve_env()

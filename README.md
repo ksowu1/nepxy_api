@@ -135,6 +135,7 @@ See `docs/BACKUPS.md` for backup/restore procedures.
 - Staging guide: `docs/staging.md`
 - Rollback runbook: `docs/runbooks/rollback.md`
 - Incident triage: `docs/runbooks/incident-triage.md`
+- Prod smoke check: `scripts/prod_smoke.ps1` with `BASE_URL`, `SMOKE_EMAIL`, `SMOKE_PASSWORD`, optional `STAGING_GATE_KEY`
 
 \## Observability
 
