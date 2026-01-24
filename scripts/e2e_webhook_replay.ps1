@@ -7,6 +7,11 @@ if (-not $base) {
     $base = "http://127.0.0.1:8001"
 }
 
+$stagingGate = $env:STAGING_GATE_KEY
+if ($stagingGate -and $stagingGate.Trim().Length -gt 0) {
+    Write-Host "Using staging gate header"
+}
+
 if (-not $env:TMONEY_WEBHOOK_SECRET) {
     $env:TMONEY_WEBHOOK_SECRET = "dev_secret_tmoney"
 }
@@ -49,6 +54,9 @@ function Invoke-Api([string]$Method, [string]$Uri, [hashtable]$Headers, [string]
 
 function AuthHeaders([string]$Token, [string]$Idem) {
     $h = @{ Authorization = "Bearer $Token" }
+    if ($stagingGate -and $stagingGate.Trim().Length -gt 0) {
+        $h["X-Staging-Key"] = $stagingGate.Trim()
+    }
     if ($Idem) {
         $h["Idempotency-Key"] = $Idem
     }
@@ -80,8 +88,13 @@ $adminPassPlain = SecureToPlain $adminPass
 $loginUserBody = @{ email = $userEmail; password = $userPassPlain } | ConvertTo-Json -Depth 5
 $loginAdminBody = @{ email = $adminEmail; password = $adminPassPlain } | ConvertTo-Json -Depth 5
 
-$userLogin = Invoke-Api -Method "Post" -Uri "$base/v1/auth/login" -Headers @{} -Body $loginUserBody
-$adminLogin = Invoke-Api -Method "Post" -Uri "$base/v1/auth/login" -Headers @{} -Body $loginAdminBody
+$loginHeaders = @{}
+if ($stagingGate -and $stagingGate.Trim().Length -gt 0) {
+    $loginHeaders["X-Staging-Key"] = $stagingGate.Trim()
+}
+
+$userLogin = Invoke-Api -Method "Post" -Uri "$base/v1/auth/login" -Headers $loginHeaders -Body $loginUserBody
+$adminLogin = Invoke-Api -Method "Post" -Uri "$base/v1/auth/login" -Headers $loginHeaders -Body $loginAdminBody
 
 $token = ($userLogin.Content | ConvertFrom-Json).access_token
 $adminToken = ($adminLogin.Content | ConvertFrom-Json).access_token
@@ -142,6 +155,9 @@ $payloadBytes = [Text.Encoding]::UTF8.GetBytes($payloadJson)
 $sig = Sign-Tmoney -BodyBytes $payloadBytes -Secret $env:TMONEY_WEBHOOK_SECRET
 
 $webhookHeaders = @{ "Content-Type" = "application/json"; "X-Signature" = $sig }
+if ($stagingGate -and $stagingGate.Trim().Length -gt 0) {
+    $webhookHeaders["X-Staging-Key"] = $stagingGate.Trim()
+}
 Invoke-Api -Method "Post" -Uri "$base/v1/webhooks/tmoney" -Headers $webhookHeaders -Body $payloadJson | Out-Null
 
 $eventsResp = Invoke-Api -Method "Get" -Uri "$base/v1/admin/webhooks/events?limit=50&external_ref=$externalRef&provider=TMONEY" -Headers (AuthHeaders -Token $adminToken -Idem $null) -Body $null

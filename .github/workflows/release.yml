@@ -1,0 +1,140 @@
+name: Release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  pytest:
+    name: pytest
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: nepxy_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres -d nepxy_test"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/nepxy_test
+      ENV: test
+      MM_MODE: sandbox
+      MM_ENABLED_PROVIDERS: TMONEY,FLOOZ,MOMO,MTN_MOMO,THUNES
+      MM_STRICT_STARTUP_VALIDATION: false
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libpq-dev postgresql-client
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Wait for Postgres
+        run: |
+          for i in {1..30}; do
+            pg_isready -h localhost -U postgres -d nepxy_test && exit 0
+            sleep 1
+          done
+          echo "Postgres not ready" >&2
+          exit 1
+
+      - name: Load schema
+        run: |
+          psql "$DATABASE_URL" -f db/schema_v1.sql
+
+      - name: Seed cashout limits
+        run: |
+          psql "$DATABASE_URL" -c "INSERT INTO limits.account_limits (kyc_tier, daily_send_cents, monthly_send_cents, daily_cashout_cents, is_active) VALUES (1, 1000000, 5000000, 1000000, TRUE), (2, 2500000, 15000000, 2500000, TRUE) ON CONFLICT (kyc_tier) DO NOTHING;"
+
+      - name: Run tests
+        run: |
+          pytest -q --disable-warnings --maxfail=1
+
+  canary_staging:
+    name: canary_staging
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: pytest
+    env:
+      STAGING_BASE_URL: ${{ secrets.STAGING_BASE_URL }}
+      STAGING_GATE_KEY: ${{ secrets.STAGING_GATE_KEY }}
+      STAGING_USER_EMAIL: ${{ secrets.STAGING_USER_EMAIL }}
+      STAGING_USER_PASSWORD: ${{ secrets.STAGING_USER_PASSWORD }}
+      STAGING_ADMIN_EMAIL: ${{ secrets.STAGING_ADMIN_EMAIL }}
+      STAGING_ADMIN_PASSWORD: ${{ secrets.STAGING_ADMIN_PASSWORD }}
+      TMONEY_WEBHOOK_SECRET: ${{ secrets.TMONEY_WEBHOOK_SECRET }}
+      BOOTSTRAP_ADMIN_SECRET: ${{ secrets.BOOTSTRAP_ADMIN_SECRET }}
+      CANARY_ALLOW_BOOTSTRAP: "1"
+    steps:
+      - name: Check secrets
+        id: check
+        shell: bash
+        run: |
+          required=(
+            STAGING_BASE_URL
+            STAGING_GATE_KEY
+            STAGING_USER_EMAIL
+            STAGING_USER_PASSWORD
+            STAGING_ADMIN_EMAIL
+            STAGING_ADMIN_PASSWORD
+            TMONEY_WEBHOOK_SECRET
+          )
+          missing=()
+          for name in "${required[@]}"; do
+            value="${!name:-}"
+            if [ -z "$value" ]; then
+              missing+=("$name")
+            fi
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "Missing required secrets for canary run: ${missing[*]}"
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout
+        if: steps.check.outputs.ready == 'true'
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        if: steps.check.outputs.ready == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        if: steps.check.outputs.ready == 'true'
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Canary smoke
+        if: steps.check.outputs.ready == 'true'
+        run: python scripts/canary_smoke.py

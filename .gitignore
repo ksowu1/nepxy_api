@@ -50,6 +50,11 @@ mobile/nepxy/
 
 # Local env script
 scripts/env.ps1
+scripts/_env_staging.ps1
+scripts/_env_local.ps1
+scripts/_env_staging_local.ps1
+scripts/_env_staging_local.secrets.ps1
+scripts/_env_staging_overrides.ps1
 
 
 # Weird accidental files from terminal pastes

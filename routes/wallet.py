@@ -20,6 +20,13 @@ from schemas import (
 router = APIRouter(prefix="/v1", tags=["wallets"])
 
 
+def _cursor_timestamp(value) -> str:
+    text = value.isoformat()
+    if text.endswith("+00:00"):
+        return text[:-6] + "Z"
+    return text
+
+
 @router.get("/wallets", response_model=WalletListResponse)
 def list_my_wallets(user: CurrentUser = Depends(get_current_user)):
     with get_conn() as conn:
@@ -88,7 +95,7 @@ def wallet_transactions(
     next_cursor = None
     if items:
         last = items[-1]
-        next_cursor = f"{last.created_at.isoformat()}|{last.entry_id}"
+        next_cursor = f"{_cursor_timestamp(last.created_at)}|{last.entry_id}"
 
     return WalletTxnPage(wallet_id=wallet_id, items=items, next_cursor=next_cursor)
 
@@ -125,6 +132,6 @@ def wallet_activity(
     next_cursor = None
     if items:
         last = items[-1]
-        next_cursor = f"{last.created_at.isoformat()}|{last.transaction_id}"
+        next_cursor = f"{_cursor_timestamp(last.created_at)}|{last.transaction_id}"
 
     return WalletActivityPage(wallet_id=wallet_id, items=items, next_cursor=next_cursor)

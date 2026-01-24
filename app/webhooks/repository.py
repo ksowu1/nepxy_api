@@ -29,6 +29,7 @@ def insert_webhook_event(
     update_applied: bool | None = None,
     ignored: bool | None = None,
     ignore_reason: str | None = None,
+    request_id: str | None = None,
 ) -> str:
     """
     Insert a webhook event for audit/debugging.
@@ -45,7 +46,8 @@ def insert_webhook_event(
       payout_transaction_id,
       payout_status_before, payout_status_after,
       update_applied,
-      ignored, ignore_reason
+      ignored, ignore_reason,
+      request_id
     )
     VALUES (
       %(provider)s, %(path)s,
@@ -55,7 +57,8 @@ def insert_webhook_event(
       %(payout_transaction_id)s,
       %(payout_status_before)s, %(payout_status_after)s,
       %(update_applied)s,
-      %(ignored)s, %(ignore_reason)s
+      %(ignored)s, %(ignore_reason)s,
+      %(request_id)s
     )
     RETURNING id
     """
@@ -78,68 +81,7 @@ def insert_webhook_event(
         "update_applied": update_applied,
         "ignored": ignored,
         "ignore_reason": ignore_reason,
-    }
-
-    with conn.cursor() as cur:
-        cur.execute(sql, params)
-        row = cur.fetchone()
-        assert row and row[0], "insert_webhook_event: missing id"
-        return str(row[0])
-
-
-
-def insert_webhook_event(conn: PGConn, *, provider: str, path: str, headers: dict[str, Any] | None = None,
-                         body: dict[str, Any] | None = None, body_raw: str | None = None,
-                         signature: str | None = None, signature_valid: bool | None = None,
-                         signature_error: str | None = None, provider_ref: str | None = None,
-                         external_ref: str | None = None, status_raw: str | None = None,
-                         payout_transaction_id: str | None = None, payout_status_before: str | None = None,
-                         payout_status_after: str | None = None, update_applied: bool | None = None,
-                         ignored: bool | None = None, ignore_reason: str | None = None) -> str:
-    h = headers or {}
-
-    sql = """
-    INSERT INTO webhook_events (
-      provider, path,
-      signature, signature_valid, signature_error,
-      headers, body, body_raw,
-      provider_ref, external_ref, status_raw,
-      payout_transaction_id,
-      payout_status_before, payout_status_after,
-      update_applied,
-      ignored, ignore_reason
-    )
-    VALUES (
-      %(provider)s, %(path)s,
-      %(signature)s, %(signature_valid)s, %(signature_error)s,
-      %(headers)s, %(body)s, %(body_raw)s,
-      %(provider_ref)s, %(external_ref)s, %(status_raw)s,
-      %(payout_transaction_id)s,
-      %(payout_status_before)s, %(payout_status_after)s,
-      %(update_applied)s,
-      %(ignored)s, %(ignore_reason)s
-    )
-    RETURNING id
-    """
-
-    params = {
-        "provider": provider,
-        "path": path,
-        "signature": signature,
-        "signature_valid": signature_valid,
-        "signature_error": signature_error,
-        "headers": Json(h),
-        "body": Json(body) if body is not None else None,
-        "body_raw": body_raw,
-        "provider_ref": provider_ref,
-        "external_ref": external_ref,
-        "status_raw": status_raw,
-        "payout_transaction_id": payout_transaction_id,
-        "payout_status_before": payout_status_before,
-        "payout_status_after": payout_status_after,
-        "update_applied": update_applied,
-        "ignored": ignored,
-        "ignore_reason": ignore_reason,
+        "request_id": request_id,
     }
 
     with conn.cursor() as cur:
