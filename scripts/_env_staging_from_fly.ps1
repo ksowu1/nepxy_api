@@ -88,6 +88,7 @@ $requiredKeys = @(
     "ADMIN_EMAIL",
     "ADMIN_PASSWORD",
     "TMONEY_WEBHOOK_SECRET",
+    "THUNES_WEBHOOK_SECRET",
     "BOOTSTRAP_ADMIN_SECRET"
 )
 $missing = @()

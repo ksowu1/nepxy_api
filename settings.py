@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import os
 from typing import Literal
 from uuid import UUID
 
@@ -239,12 +240,20 @@ def validate_env_settings() -> None:
     providers = _enabled_providers_from_settings()
 
     missing: list[str] = []
+    required_all = ["DATABASE_URL"]
+    required_staging = ["STAGING_GATE_KEY", "BOOTSTRAP_ADMIN_SECRET"]
+    required_staging_prod = ["JWT_SECRET"]
 
-    # Always required in prod
-    if env == "prod":
-        _missing_if_empty(missing, "DATABASE_URL", settings.DATABASE_URL)
+    if env in {"staging", "prod"}:
+        for name in required_all:
+            _missing_if_empty(missing, name, getattr(settings, name, ""))
+
         if settings.JWT_SECRET == "dev-secret-change-me":
             missing.append("JWT_SECRET")
+
+        if env == "staging":
+            for name in required_staging:
+                _missing_if_empty(missing, name, os.getenv(name, ""))
 
         if "TMONEY" in providers:
             _missing_if_empty(missing, "TMONEY_WEBHOOK_SECRET", getattr(settings, "TMONEY_WEBHOOK_SECRET", ""))
@@ -254,7 +263,7 @@ def validate_env_settings() -> None:
             _missing_if_empty(missing, "MOMO_WEBHOOK_SECRET", getattr(settings, "MOMO_WEBHOOK_SECRET", ""))
         if "THUNES" in providers:
             _missing_if_empty(missing, "THUNES_WEBHOOK_SECRET", settings.THUNES_WEBHOOK_SECRET)
-            if settings.THUNES_ALLOW_UNSIGNED_WEBHOOKS:
+            if env == "prod" and settings.THUNES_ALLOW_UNSIGNED_WEBHOOKS:
                 missing.append("THUNES_ALLOW_UNSIGNED_WEBHOOKS")
             _missing_if_empty(missing, "THUNES_PAYER_ID_GH", settings.THUNES_PAYER_ID_GH)
             if settings.MM_MODE == "real":
@@ -276,8 +285,8 @@ def validate_env_settings() -> None:
 
         if missing:
             raise RuntimeError(
-                "ENV validation failed for prod. Missing required env vars: "
-                + ", ".join(sorted(set(missing)))
+                "ENV validation failed for %s. Missing required env vars: %s"
+                % (env, ", ".join(sorted(set(missing))))
             )
         return
 

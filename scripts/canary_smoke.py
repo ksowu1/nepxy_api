@@ -78,6 +78,15 @@ def _redact_email(value):
     return name[0] + "***@" + domain
 
 
+def _mask_secret(value: str | None) -> str:
+    if not value:
+        return "<empty>"
+    value = str(value)
+    if len(value) <= 4:
+        return "*" * len(value)
+    return ("*" * (len(value) - 4)) + value[-4:]
+
+
 def _validate_openapi_paths(openapi, allow_bootstrap):
     paths = (openapi or {}).get("paths") or {}
     required = [
@@ -256,6 +265,11 @@ def main():
     base_url = os.getenv("STAGING_BASE_URL")
     _configure_session()
 
+    print(
+        "Required env vars: STAGING_BASE_URL, STAGING_USER_EMAIL, STAGING_USER_PASSWORD, "
+        "STAGING_ADMIN_EMAIL, STAGING_ADMIN_PASSWORD"
+    )
+
     staging_user_email = os.getenv("STAGING_USER_EMAIL")
     staging_user_password = os.getenv("STAGING_USER_PASSWORD")
     staging_admin_email = os.getenv("STAGING_ADMIN_EMAIL")
@@ -287,6 +301,9 @@ def main():
         missing.append("STAGING_ADMIN_EMAIL/STAGING_ADMIN_PASSWORD")
     if missing:
         die("Missing env vars: %s" % ", ".join(missing), code=2)
+
+    if not os.getenv("STAGING_GATE_KEY"):
+        print("Warning: STAGING_GATE_KEY not set; staging gate may block requests.")
 
     require_webhook_secret = os.getenv("CANARY_REQUIRE_WEBHOOK_SECRET") == "1"
     skip_webhook = False
@@ -493,16 +510,18 @@ def main():
             except Exception:
                 detail = webhook_resp.text or ""
             if detail == "INVALID_SIGNATURE":
+                sig_value = sig_header.get("X-Signature", "")
                 digest = hashlib.sha256(payload_bytes).hexdigest()[:12]
-                sig_preview = sig_header["X-Signature"][:10]
+                sig_preview = sig_value[:10]
                 req_id = webhook_resp.headers.get("X-Request-ID")
                 print(
-                    "TMONEY webhook signature debug body_len=%s sha=%s sig=%s secret_len=%s request_id=%s"
+                    "TMONEY webhook signature debug body_len=%s sha=%s sig=%s secret=%s sig_len=%s request_id=%s"
                     % (
                         len(payload_bytes),
                         digest,
                         sig_preview,
-                        len(webhook_secret),
+                        _mask_secret(webhook_secret),
+                        len(sig_value),
                         req_id,
                     )
                 )
