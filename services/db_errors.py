@@ -57,6 +57,8 @@ def _extract_code_from_text(text: str) -> str | None:
         return m.group(1)
 
     lower = text.lower()
+    if "insufficient funds" in lower:
+        return "INSUFFICIENT_FUNDS"
     if "no cashout limit configured" in lower:
         return "NO_CASHOUT_LIMIT_CONFIGURED"
 
