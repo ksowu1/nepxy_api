@@ -66,7 +66,7 @@ jobs:
 
       - name: Alembic heads
         run: |
-          heads=$(alembic heads -q | wc -l)
+          heads=$(alembic heads | wc -l)
           if [ "$heads" -ne 1 ]; then
             echo "Expected single alembic head, found $heads" >&2
             alembic heads
