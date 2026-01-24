@@ -12,8 +12,7 @@ from dataclasses import dataclass
 from typing import Dict, Optional, Any, List
 
 # Ensure debug router is mounted in tests before importing app.
-if not os.getenv("ENV") and not os.getenv("ENVIRONMENT"):
-    os.environ["ENV"] = "dev"
+os.environ["ENV"] = "dev"
 
 import pytest
 from fastapi.testclient import TestClient
