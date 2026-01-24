@@ -2267,3 +2267,23 @@ ALTER TABLE app.idempotency_keys
     ADD CONSTRAINT idempotency_keys_pkey PRIMARY KEY (id);
 
 CREATE UNIQUE INDEX ux_idempotency_keys_user_route ON app.idempotency_keys USING btree (user_id, idempotency_key, route_key);
+
+--
+-- Name: admin_events; Type: TABLE; Schema: audit; Owner: -
+--
+
+CREATE SCHEMA IF NOT EXISTS audit;
+
+CREATE TABLE IF NOT EXISTS audit.admin_events (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    admin_user_id uuid NOT NULL,
+    action text NOT NULL,
+    entity_type text NOT NULL,
+    entity_id text,
+    metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
+    request_id text
+);
+
+ALTER TABLE audit.admin_events
+    ADD CONSTRAINT admin_events_pkey PRIMARY KEY (id);

@@ -6,12 +6,13 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Path
+from fastapi import APIRouter, Depends, HTTPException, Query, Path, Request
 
 from db import get_conn
 from services.roles import require_admin
 from deps.auth import CurrentUser
 from services.audit_log import write_audit_log
+from services.admin_audit import log_admin_event
 from app.payouts.repository import update_status_by_any_ref, get_payout_by_any_ref
 from app.providers.mobile_money.thunes import ThunesProvider
 
@@ -144,6 +145,7 @@ def list_events(
 def replay_event(
     event_id: str = Path(...),
     allow_terminal_override: bool = Query(False),
+    request: Request,
     admin: CurrentUser = Depends(require_admin),
 ):
     """
@@ -207,20 +209,32 @@ def replay_event(
             else:
                 reason = "PAYOUT_NOT_FOUND"
 
+        metadata = {
+            "provider": provider,
+            "provider_ref": provider_ref,
+            "external_ref": external_ref,
+            "applied": bool(ok),
+            "ignored": bool(ignored),
+            "reason": reason,
+        }
         write_audit_log(
             conn,
             actor_user_id=str(admin.user_id),
             action="WEBHOOK_REPLAY",
             target_id=str(event_id),
-            metadata={
-                "provider": provider,
-                "provider_ref": provider_ref,
-                "external_ref": external_ref,
-                "applied": bool(ok),
-                "ignored": bool(ignored),
-                "reason": reason,
-            },
+            metadata=metadata,
         )
+        with conn.cursor() as cur:
+            request_id = getattr(request.state, "request_id", None) if request else None
+            log_admin_event(
+                cur,
+                admin_user_id=str(admin.user_id),
+                action="WEBHOOK_REPLAY",
+                entity_type="WEBHOOK_EVENT",
+                entity_id=str(event_id),
+                metadata=metadata,
+                request_id=request_id,
+            )
 
         conn.commit()
 

@@ -29,6 +29,7 @@ from routes.webhooks import router as webhooks_router
 from routes.admin_webhooks import router as admin_webhooks_router
 from routes.admin_support import router as admin_support_router
 from routes.admin_exports import router as admin_exports_router
+from routes.admin_audit import router as admin_audit_router
 from routes.health import router as health_router
 from routes.metrics import router as metrics_router
 from routes.catalog import router as catalog_router
@@ -178,6 +179,7 @@ def create_app() -> FastAPI:
     app.include_router(admin_support_router)
     app.include_router(admin_reconcile_router)
     app.include_router(admin_exports_router)
+    app.include_router(admin_audit_router)
     app.include_router(health_router)
     app.include_router(metrics_router)
     app.include_router(catalog_router)

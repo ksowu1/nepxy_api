@@ -422,6 +422,30 @@ def _ensure_audit_log_table():
 
 
 @pytest.fixture(autouse=True)
+def _ensure_admin_events_table():
+    from db import get_conn
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("CREATE SCHEMA IF NOT EXISTS audit;")
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS audit.admin_events (
+                  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+                  created_at timestamptz NOT NULL DEFAULT now(),
+                  admin_user_id uuid NOT NULL,
+                  action text NOT NULL,
+                  entity_type text NOT NULL,
+                  entity_id text,
+                  metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+                  request_id text
+                );
+                """
+            )
+        conn.commit()
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _ensure_country_gh_enum():
     from db import get_conn
     with get_conn() as conn:

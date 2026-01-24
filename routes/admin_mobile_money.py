@@ -6,7 +6,7 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from psycopg2.extras import RealDictCursor
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -14,6 +14,7 @@ from db import get_conn
 from deps.admin import require_admin
 from deps.auth import CurrentUser
 from services.audit_log import write_audit_log
+from services.admin_audit import log_admin_event
 from app.workers import payout_worker
 
 router = APIRouter(prefix="/v1/admin/mobile-money", tags=["admin", "mobile-money"])
@@ -67,12 +68,17 @@ def _provider_aliases(provider: str | None) -> list[str]:
 
 
 @router.post("/payouts/{transaction_id}/confirmed")
-def admin_mark_payout_confirmed(transaction_id: str, admin: CurrentUser = Depends(require_admin)):
+def admin_mark_payout_confirmed(
+    transaction_id: str,
+    req: Request,
+    admin: CurrentUser = Depends(require_admin),
+):
     """
     Admin endpoint to force-confirm a payout.
     Used by tests: test_admin_can_mark_payout_confirmed
     """
     with get_conn() as conn:
+        request_id = getattr(req.state, "request_id", None)
         with conn.cursor() as cur:
             # Ensure payout exists
             cur.execute(
@@ -95,6 +101,16 @@ def admin_mark_payout_confirmed(transaction_id: str, admin: CurrentUser = Depend
             )
             updated = cur.fetchone()
 
+            log_admin_event(
+                cur,
+                admin_user_id=str(admin.user_id),
+                action="PAYOUT_CONFIRMED",
+                entity_type="PAYOUT",
+                entity_id=str(updated[0]),
+                metadata={"status": updated[1]},
+                request_id=request_id,
+            )
+
         write_audit_log(
             conn,
             actor_user_id=str(admin.user_id),
@@ -111,9 +127,10 @@ def admin_mark_payout_confirmed(transaction_id: str, admin: CurrentUser = Depend
 def admin_retry_payout(
     transaction_id: UUID,
     body: PayoutRetryRequest | None = None,
+    request: Request,
     admin: CurrentUser = Depends(require_admin),
 ):
-    req = body or PayoutRetryRequest()
+    payload = body or PayoutRetryRequest()
     with get_conn() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(
@@ -142,7 +159,7 @@ def admin_retry_payout(
                 return _serialize_retry_summary(row)
 
             if status == "FAILED":
-                if row.get("retryable") is False and not req.force:
+                if row.get("retryable") is False and not payload.force:
                     raise HTTPException(status_code=409, detail="NOT_RETRYABLE")
 
                 cur.execute(
@@ -162,12 +179,23 @@ def admin_retry_payout(
             else:
                 raise HTTPException(status_code=409, detail="NOT_RETRYABLE")
 
+            request_id = getattr(request.state, "request_id", None) if request else None
+            log_admin_event(
+                cur,
+                admin_user_id=str(admin.user_id),
+                action="PAYOUT_RETRY",
+                entity_type="PAYOUT",
+                entity_id=str(transaction_id),
+                metadata={"force": bool(payload.force), "reason": payload.reason},
+                request_id=request_id,
+            )
+
         write_audit_log(
             conn,
             actor_user_id=str(admin.user_id),
             action="PAYOUT_RETRY",
             target_id=str(transaction_id),
-            metadata={"force": bool(req.force), "reason": req.reason},
+            metadata={"force": bool(payload.force), "reason": payload.reason},
         )
         conn.commit()
 

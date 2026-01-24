@@ -237,3 +237,43 @@ def test_admin_webhook_events_for_payout(client, admin_user, user1, wallet1_xof,
     assert body["count"] >= 1
     events = body["events"]
     assert any((e.get("external_ref") == ext) or (provider_ref and e.get("provider_ref") == provider_ref) for e in events)
+
+
+def test_admin_payout_confirm_audit_event(client, admin_user):
+    tx_id = _insert_payout(status="PENDING")
+    r = client.post(
+        f"/v1/admin/mobile-money/payouts/{tx_id}/confirmed",
+        headers=_auth_headers(admin_user.token),
+    )
+    assert r.status_code == 200, r.text
+    request_id = r.headers.get("X-Request-ID")
+
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT admin_user_id::text, action, entity_type, entity_id, request_id
+            FROM audit.admin_events
+            WHERE entity_id = %s
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (str(tx_id),),
+        )
+        row = cur.fetchone()
+
+    assert row is not None
+    assert row[0] == str(admin_user.user_id)
+    assert row[1] == "PAYOUT_CONFIRMED"
+    assert row[2] == "PAYOUT"
+    assert row[3] == str(tx_id)
+    assert row[4] == request_id
+
+    r = client.get(
+        f"/v1/admin/audit-events?entity_id={tx_id}&limit=5",
+        headers=_auth_headers(admin_user.token),
+    )
+    assert r.status_code == 200, r.text
+    payload = r.json()
+    assert payload["count"] >= 1
+    assert any(e.get("entity_id") == str(tx_id) for e in payload.get("events", []))
