@@ -64,9 +64,18 @@ jobs:
           echo "Postgres not ready" >&2
           exit 1
 
-      - name: Load schema
+      - name: Alembic heads
         run: |
-          psql "$DATABASE_URL" -f db/schema_v1.sql
+          heads=$(alembic heads -q | wc -l)
+          if [ "$heads" -ne 1 ]; then
+            echo "Expected single alembic head, found $heads" >&2
+            alembic heads
+            exit 1
+          fi
+
+      - name: Alembic upgrade
+        run: |
+          alembic upgrade head
 
       - name: Seed cashout limits
         run: |

@@ -64,6 +64,11 @@ def rate_limit_webhook_per_min() -> int:
     return int(raw) if raw.isdigit() else 60
 
 
+def rate_limit_webhook_per_min() -> int:
+    raw = (os.getenv("RATE_LIMIT_WEBHOOK_PER_MIN") or "60").strip()
+    return int(raw) if raw.isdigit() else 60
+
+
 def rate_limit_or_429(*, key: str, limit: int, window_seconds: int) -> None:
     ok, retry_after = _limiter.allow(key, limit, window_seconds)
     if ok:
