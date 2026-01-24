@@ -76,5 +76,8 @@ jobs:
           python -m compileall -q . -x "(_migrate_webhook_events_signature_valid\\.py|tmp_register\\.py)$"
 
       - name: Run tests
+        env:
+          ENV: dev
+          ENVIRONMENT: dev
         run: |
           pytest -q --disable-warnings --maxfail=1
