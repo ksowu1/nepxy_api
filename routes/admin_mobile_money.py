@@ -126,8 +126,8 @@ def admin_mark_payout_confirmed(
 @router.post("/payouts/{transaction_id}/retry")
 def admin_retry_payout(
     transaction_id: UUID,
-    body: PayoutRetryRequest | None = None,
     request: Request,
+    body: PayoutRetryRequest | None = None,
     admin: CurrentUser = Depends(require_admin),
 ):
     payload = body or PayoutRetryRequest()

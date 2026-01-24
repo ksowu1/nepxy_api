@@ -143,9 +143,9 @@ def list_events(
 
 @router.post("/events/{event_id}/replay")
 def replay_event(
+    request: Request,
     event_id: str = Path(...),
     allow_terminal_override: bool = Query(False),
-    request: Request,
     admin: CurrentUser = Depends(require_admin),
 ):
     """
