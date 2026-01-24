@@ -7,6 +7,7 @@ from main import create_app
 
 def test_health_staging_requires_gate_header(monkeypatch):
     monkeypatch.setenv("ENV", "staging")
+    monkeypatch.setenv("ENVIRONMENT", "staging")
     monkeypatch.setenv("STAGING_GATE_KEY", "test-gate")
     app = create_app()
     client = TestClient(app, raise_server_exceptions=False)
@@ -18,6 +19,7 @@ def test_health_staging_requires_gate_header(monkeypatch):
 
 def test_health_staging_allows_gate_header(monkeypatch):
     monkeypatch.setenv("ENV", "staging")
+    monkeypatch.setenv("ENVIRONMENT", "staging")
     monkeypatch.setenv("STAGING_GATE_KEY", "test-gate")
     monkeypatch.setenv("MM_MODE", "sandbox")
     app = create_app()

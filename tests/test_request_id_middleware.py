@@ -42,6 +42,7 @@ def test_request_id_echoed_when_present():
 
 def test_request_id_present_on_staging_gate_403(monkeypatch):
     monkeypatch.setenv("ENV", "staging")
+    monkeypatch.setenv("ENVIRONMENT", "staging")
     monkeypatch.setenv("STAGING_GATE_KEY", "gate-secret")
     app = create_app()
     client = TestClient(app, raise_server_exceptions=False)

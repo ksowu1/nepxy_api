@@ -23,6 +23,7 @@ def test_readyz(client):
 def test_version_endpoint(monkeypatch):
     monkeypatch.setenv("GIT_SHA", "test-sha")
     monkeypatch.setenv("ENV", "staging")
+    monkeypatch.setenv("ENVIRONMENT", "staging")
     monkeypatch.setenv("STAGING_GATE_KEY", "test-gate")
     app = create_app()
     client = TestClient(app, raise_server_exceptions=False)
