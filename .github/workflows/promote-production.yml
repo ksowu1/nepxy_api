@@ -1,0 +1,81 @@
+name: Promote Production
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_ref:
+        description: "Image ref/digest to deploy (optional)"
+        required: false
+        default: ""
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve staging deploy metadata
+        id: resolve
+        if: ${{ inputs.image_ref == '' }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const runs = await github.rest.actions.listWorkflowRuns({
+              owner,
+              repo,
+              workflow_id: 'fly-deploy.yml',
+              branch: 'main',
+              status: 'success',
+              per_page: 1,
+            });
+            if (!runs.data.workflow_runs.length) {
+              core.setFailed('No successful staging deploy runs found.');
+              return;
+            }
+            core.setOutput('run_id', runs.data.workflow_runs[0].id.toString());
+
+      - name: Download staging deploy metadata
+        if: ${{ inputs.image_ref == '' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: staging-deploy-meta
+          run-id: ${{ steps.resolve.outputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Read image ref
+        id: image
+        run: |
+          if [ -n "${{ inputs.image_ref }}" ]; then
+            echo "IMAGE_REF=${{ inputs.image_ref }}" >> "$GITHUB_ENV"
+          else
+            image_ref=$(python scripts/read_deploy_meta.py deploy_meta.json)
+            if [ -z "$image_ref" ]; then
+              echo "Missing image_ref in deploy_meta.json" >&2
+              exit 1
+            fi
+            echo "IMAGE_REF=$image_ref" >> "$GITHUB_ENV"
+          fi
+
+      - uses: superfly/flyctl-actions/setup-flyctl@v1
+
+      - name: Deploy to Fly (prod)
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          fly deploy --app nepxy-prod --image "$IMAGE_REF" --remote-only
+
+      - name: Prod health check
+        run: |
+          for i in {1..30}; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" "https://nepxy-prod.fly.dev/health" || true)
+            if [ "$code" = "200" ]; then
+              echo "Health check OK"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Health check failed" >&2
+          exit 1
