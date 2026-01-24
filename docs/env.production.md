@@ -8,6 +8,38 @@ Notes:
 - In staging, `/health` requires `X-Staging-Key`.
 - Debug routes live under `/debug` and should be disabled in prod.
 
+## Release Flow (PR -> Staging -> Prod)
+
+- PRs must pass `Pytest / test` before merge.
+- Push to `main` triggers staging deploy (Fly) and uploads deploy metadata.
+- Staging canary runs on demand or after deploy.
+- Production deploy is manual and promotes the exact staging image digest (no rebuild).
+- Rollback: redeploy a previous digest using `fly deploy --image <digest> -a nepxy-prod`.
+
+### GitHub Environments + Secrets
+
+Create GitHub environments: `staging`, `production`.
+- `production` should require manual approval.
+
+Staging environment secrets:
+- `FLY_API_TOKEN`
+- `STAGING_BASE_URL` (https://nepxy-staging.fly.dev)
+- `STAGING_GATE_KEY`
+- `STAGING_USER_EMAIL`
+- `STAGING_USER_PASSWORD`
+- `STAGING_ADMIN_EMAIL`
+- `STAGING_ADMIN_PASSWORD`
+- `TMONEY_WEBHOOK_SECRET`
+- `BOOTSTRAP_ADMIN_SECRET` (optional, if canary bootstrap is allowed)
+- `CANARY_ALLOW_BOOTSTRAP` (optional, default is `1`)
+
+Production environment secrets:
+- `FLY_API_TOKEN`
+
+Fly apps used in workflows:
+- `nepxy-staging`
+- `nepxy-prod`
+
 ## Core
 
 | Name | Required? | Example | Safe default | What it controls | Where used |
