@@ -75,6 +75,14 @@ function Sign-Tmoney([byte[]]$BodyBytes, [string]$Secret) {
     return "sha256=$hex"
 }
 
+function Canonical-Json([hashtable]$Obj) {
+    $ordered = [ordered]@{}
+    foreach ($k in ($Obj.Keys | Sort-Object)) {
+        $ordered[$k] = $Obj[$k]
+    }
+    return ($ordered | ConvertTo-Json -Compress -Depth 10)
+}
+
 Write-Host "User credentials" -ForegroundColor Cyan
 $userEmail = Read-NonEmpty "User email"
 $userPass = Read-Host "User password" -AsSecureString
@@ -150,7 +158,7 @@ $externalRef = $payoutObj.external_ref
 if (-not $externalRef) { throw "Missing external_ref." }
 
 $payloadObj = @{ external_ref = $externalRef; status = "SUCCESS" }
-$payloadJson = $payloadObj | ConvertTo-Json -Compress
+$payloadJson = Canonical-Json $payloadObj
 $payloadBytes = [Text.Encoding]::UTF8.GetBytes($payloadJson)
 $sig = Sign-Tmoney -BodyBytes $payloadBytes -Secret $env:TMONEY_WEBHOOK_SECRET
 
@@ -158,7 +166,7 @@ $webhookHeaders = @{ "Content-Type" = "application/json"; "X-Signature" = $sig }
 if ($stagingGate -and $stagingGate.Trim().Length -gt 0) {
     $webhookHeaders["X-Staging-Key"] = $stagingGate.Trim()
 }
-Invoke-Api -Method "Post" -Uri "$base/v1/webhooks/tmoney" -Headers $webhookHeaders -Body $payloadJson | Out-Null
+Invoke-WebRequest -Method Post -Uri "$base/v1/webhooks/tmoney" -Headers $webhookHeaders -Body $payloadBytes -ContentType "application/json" | Out-Null
 
 $eventsResp = Invoke-Api -Method "Get" -Uri "$base/v1/admin/webhooks/events?limit=50&external_ref=$externalRef&provider=TMONEY" -Headers (AuthHeaders -Token $adminToken -Idem $null) -Body $null
 $eventsObj = $eventsResp.Content | ConvertFrom-Json

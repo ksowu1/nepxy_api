@@ -59,6 +59,7 @@ class MomoProvider:
             phone_e164=phone,
             reference_id=provider_ref,
             note=payout.get("payee_note") or "NepXy cash-out",
+            request_id=_request_id_from_payout(payout),
         )
 
     def get_status(self, payout: dict) -> ProviderResult:
@@ -74,7 +75,7 @@ class MomoProvider:
         if not token:
             return ProviderResult(status="SENT", provider_ref=provider_ref, error="MOMO_TOKEN_ERROR", retryable=True)
 
-        resp = self.get_transfer_status(provider_ref)
+        resp = self.get_transfer_status(provider_ref, request_id=_request_id_from_payout(payout))
         if isinstance(resp, ProviderResult):
             return resp
 
@@ -144,6 +145,7 @@ class MomoProvider:
         phone_e164: str,
         reference_id: str,
         note: str,
+        request_id: str | None = None,
     ):
         token = self.get_access_token_disbursement()
         if not token:
@@ -157,6 +159,8 @@ class MomoProvider:
             "Ocp-Apim-Subscription-Key": self.subscription_key,
             "Content-Type": "application/json",
         }
+        if request_id:
+            headers["X-Request-ID"] = request_id
         request_currency = _resolve_currency(currency)
         body = {
             "amount": amount,
@@ -237,7 +241,7 @@ class MomoProvider:
                 retryable=True,
             )
 
-    def get_transfer_status(self, reference_id: str):
+    def get_transfer_status(self, reference_id: str, *, request_id: str | None = None):
         token = self.get_access_token_disbursement()
         if not token:
             return ProviderResult(status="SENT", provider_ref=reference_id, error="MOMO_TOKEN_ERROR", retryable=True)
@@ -248,6 +252,8 @@ class MomoProvider:
             "X-Target-Environment": self.target_env,
             "Ocp-Apim-Subscription-Key": self.subscription_key,
         }
+        if request_id:
+            headers["X-Request-ID"] = request_id
 
         try:
             resp = requests.get(url, headers=headers)
@@ -353,3 +359,10 @@ def _missing_env(api_user_id: str, api_key: str, subscription_key: str) -> list[
     if not subscription_key:
         missing.append("MOMO_DISBURSE_SUB_KEY")
     return missing
+
+
+def _request_id_from_payout(payout: dict) -> str | None:
+    value = payout.get("request_id")
+    if value:
+        return str(value)
+    return None

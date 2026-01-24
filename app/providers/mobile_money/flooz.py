@@ -50,6 +50,7 @@ class FloozProvider(MobileMoneyProvider):
         provider_ref = str(payout.get("provider_ref") or payout.get("id") or payout.get("transaction_id"))
 
         headers = _auth_headers(auth_mode, api_key)
+        headers.update(_request_id_header(payout))
         headers["Content-Type"] = "application/json"
 
         body = {
@@ -105,6 +106,7 @@ class FloozProvider(MobileMoneyProvider):
 
         url = tpl.format(provider_ref=provider_ref)
         headers = _auth_headers(auth_mode, api_key)
+        headers.update(_request_id_header(payout))
 
         try:
             resp = self.http.get(url, headers=headers, debug=True)
@@ -139,3 +141,10 @@ def _auth_headers(mode: str, api_key: str) -> dict[str, str]:
     if mode == "x-api-key":
         return {"X-Api-Key": api_key}
     return {"Authorization": f"Bearer {api_key}"}
+
+
+def _request_id_header(payout: dict) -> dict[str, str]:
+    request_id = (payout.get("request_id") or "").strip()
+    if not request_id:
+        return {}
+    return {"X-Request-ID": request_id}

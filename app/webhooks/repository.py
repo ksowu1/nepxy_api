@@ -14,6 +14,7 @@ def insert_webhook_event(
     *,
     provider: str,
     path: str,
+    request_id: str | None = None,
     headers: dict[str, Any] | None = None,
     body: dict[str, Any] | None = None,
     body_raw: str | None = None,
@@ -38,7 +39,7 @@ def insert_webhook_event(
 
     sql = """
     INSERT INTO webhook_events (
-      provider, path,
+      provider, path, request_id,
       signature, signature_valid, signature_error,
       headers, body, body_raw,
       provider_ref, external_ref, status_raw,
@@ -48,7 +49,7 @@ def insert_webhook_event(
       ignored, ignore_reason
     )
     VALUES (
-      %(provider)s, %(path)s,
+      %(provider)s, %(path)s, %(request_id)s,
       %(signature)s, %(signature_valid)s, %(signature_error)s,
       %(headers)s, %(body)s, %(body_raw)s,
       %(provider_ref)s, %(external_ref)s, %(status_raw)s,
@@ -63,6 +64,7 @@ def insert_webhook_event(
     params = {
         "provider": provider,
         "path": path,
+        "request_id": request_id,
         "signature": signature,
         "signature_valid": signature_valid,
         "signature_error": signature_error,
@@ -88,7 +90,7 @@ def insert_webhook_event(
 
 
 
-def insert_webhook_event(conn: PGConn, *, provider: str, path: str, headers: dict[str, Any] | None = None,
+def insert_webhook_event(conn: PGConn, *, provider: str, path: str, request_id: str | None = None, headers: dict[str, Any] | None = None,
                          body: dict[str, Any] | None = None, body_raw: str | None = None,
                          signature: str | None = None, signature_valid: bool | None = None,
                          signature_error: str | None = None, provider_ref: str | None = None,
@@ -100,7 +102,7 @@ def insert_webhook_event(conn: PGConn, *, provider: str, path: str, headers: dic
 
     sql = """
     INSERT INTO webhook_events (
-      provider, path,
+      provider, path, request_id,
       signature, signature_valid, signature_error,
       headers, body, body_raw,
       provider_ref, external_ref, status_raw,
@@ -110,7 +112,7 @@ def insert_webhook_event(conn: PGConn, *, provider: str, path: str, headers: dic
       ignored, ignore_reason
     )
     VALUES (
-      %(provider)s, %(path)s,
+      %(provider)s, %(path)s, %(request_id)s,
       %(signature)s, %(signature_valid)s, %(signature_error)s,
       %(headers)s, %(body)s, %(body_raw)s,
       %(provider_ref)s, %(external_ref)s, %(status_raw)s,
@@ -125,6 +127,7 @@ def insert_webhook_event(conn: PGConn, *, provider: str, path: str, headers: dic
     params = {
         "provider": provider,
         "path": path,
+        "request_id": request_id,
         "signature": signature,
         "signature_valid": signature_valid,
         "signature_error": signature_error,
@@ -176,7 +179,7 @@ def list_webhook_events(
 
     sql = f"""
     SELECT
-      id, provider, path, received_at,
+      id, provider, path, request_id, received_at,
       signature, signature_valid, signature_error,
       provider_ref, external_ref, status_raw,
       payout_transaction_id,
@@ -197,7 +200,7 @@ def list_webhook_events(
 def get_webhook_event(conn: PGConn, *, event_id: str) -> dict[str, Any] | None:
     sql = """
     SELECT
-      id, provider, path, received_at,
+      id, provider, path, request_id, received_at,
       signature, signature_valid, signature_error,
       headers, body, body_raw,
       provider_ref, external_ref, status_raw,

@@ -91,6 +91,19 @@ def _normalize_result(r: Any) -> ProviderResult:
     )
 
 
+def _payout_request_id(payout: dict) -> str | None:
+    value = payout.get("request_id")
+    if value:
+        return str(value)
+    provider_response = payout.get("provider_response")
+    if isinstance(provider_response, dict):
+        for key in ("request_id", "correlation_id"):
+            v = provider_response.get(key)
+            if v:
+                return str(v)
+    return None
+
+
 # --- Test helper provider (tests can monkeypatch get_provider() to return this) ---
 class MockProvider:
     def __init__(self, succeed: bool = True):
@@ -302,8 +315,10 @@ def _handle_pending(conn, p: dict) -> None:
             )
         )
         increment_payout_attempt(provider_name, res.status)
+        request_id = _payout_request_id(p)
         logger.info(
-            "momo payout create payout_id=%s status=%s provider_ref=%s error=%s",
+            "momo payout create request_id=%s payout_id=%s status=%s provider_ref=%s error=%s",
+            request_id,
             payout_id,
             res.status,
             res.provider_ref,
@@ -348,8 +363,10 @@ def _handle_pending(conn, p: dict) -> None:
     res = _normalize_result(provider.send_cashout(p))
     increment_payout_attempt(provider_name, res.status)
     if provider_name == "MOMO":
+        request_id = _payout_request_id(p)
         logger.info(
-            "momo payout send payout_id=%s status=%s provider_ref=%s error=%s",
+            "momo payout send request_id=%s payout_id=%s status=%s provider_ref=%s error=%s",
+            request_id,
             payout_id,
             res.status,
             res.provider_ref,
@@ -492,8 +509,10 @@ def _handle_sent(conn, p: dict) -> None:
 
     res = _normalize_result(provider.get_cashout_status(p))
     if provider_name == "MOMO":
+        request_id = _payout_request_id(p)
         logger.info(
-            "momo payout reconcile payout_id=%s provider_ref=%s status=%s error=%s",
+            "momo payout reconcile request_id=%s payout_id=%s provider_ref=%s status=%s error=%s",
+            request_id,
             payout_id,
             p.get("provider_ref"),
             res.status,

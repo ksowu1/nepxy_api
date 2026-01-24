@@ -1,0 +1,40 @@
+name: Nightly Canary Staging
+
+on:
+  schedule:
+    - cron: "30 3 * * *"
+  workflow_dispatch:
+
+jobs:
+  canary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      STAGING_BASE_URL: ${{ secrets.STAGING_BASE_URL }}
+      STAGING_GATE_KEY: ${{ secrets.STAGING_GATE_KEY }}
+      STAGING_USER_EMAIL: ${{ secrets.STAGING_USER_EMAIL }}
+      STAGING_USER_PASSWORD: ${{ secrets.STAGING_USER_PASSWORD }}
+      STAGING_ADMIN_EMAIL: ${{ secrets.STAGING_ADMIN_EMAIL }}
+      STAGING_ADMIN_PASSWORD: ${{ secrets.STAGING_ADMIN_PASSWORD }}
+      TMONEY_WEBHOOK_SECRET: ${{ secrets.TMONEY_WEBHOOK_SECRET }}
+      BOOTSTRAP_ADMIN_SECRET: ${{ secrets.BOOTSTRAP_ADMIN_SECRET }}
+      CANARY_ALLOW_BOOTSTRAP: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Pytest sanity
+        run: python -m pytest -q
+
+      - name: Canary smoke
+        run: python scripts/canary_smoke.py

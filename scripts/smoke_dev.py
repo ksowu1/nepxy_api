@@ -2,12 +2,13 @@ import json
 import os
 import sys
 import uuid
-import hmac
 import hashlib
 
 import requests
 
 _session = requests.Session()
+
+from _webhook_signing import canonical_json_bytes, tmoney_sig_header
 
 def die(message, code=1):
     print(message)
@@ -46,11 +47,6 @@ def auth_headers(token, idem=None):
 
 def new_idem_key():
     return "idem-" + uuid.uuid4().hex
-
-
-def sign_tmoney(payload_bytes, secret):
-    mac = hmac.new(secret.encode("utf-8"), payload_bytes, hashlib.sha256).hexdigest()
-    return "sha256=" + mac
 
 
 def _safe_json(resp):
@@ -285,13 +281,16 @@ def main():
 
     step("Post TMONEY webhook")
     payload_obj = {"external_ref": external_ref, "status": "SUCCESS"}
-    payload_json = json.dumps(payload_obj, separators=(",", ":"), ensure_ascii=False)
-    payload_bytes = payload_json.encode("utf-8")
-    sig = sign_tmoney(payload_bytes, webhook_secret)
+    payload_bytes = canonical_json_bytes(payload_obj)
+    sig_header = tmoney_sig_header(webhook_secret, payload_bytes)
+    if os.getenv("WEBHOOK_DEBUG") == "1":
+        digest = hashlib.sha256(payload_bytes).hexdigest()[:12]
+        sig_preview = sig_header["X-Signature"][:12]
+        print("TMONEY webhook debug body_len=%s sha=%s sig=%s" % (len(payload_bytes), digest, sig_preview))
     request(
         "POST",
         base_url + "/v1/webhooks/tmoney",
-        headers={"Content-Type": "application/json", "X-Signature": sig},
+        headers={"Content-Type": "application/json", **sig_header},
         data=payload_bytes,
     )
 

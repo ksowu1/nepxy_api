@@ -4,10 +4,13 @@
 from __future__ import annotations
 
 from typing import Any, Dict, Optional
+import logging
 import requests
 
 from settings import settings
 from app.providers.base import ProviderResult
+
+logger = logging.getLogger("nexapay")
 
 
 # --- Thunes "Money Transfer API v2" base path is: {API_ENDPOINT}/v2/money-transfer
@@ -54,11 +57,14 @@ class ThunesProvider:
             return None
         return (self.api_key, self.api_secret)
 
-    def _headers(self) -> Dict[str, str]:
+    def _build_headers(self, request_id: str | None = None) -> Dict[str, str]:
         h = {"Content-Type": "application/json"}
         if self.use_simulation:
             # Thunes supports x-simulated-transaction=true for sandbox simulation :contentReference[oaicite:12]{index=12}
             h["x-simulated-transaction"] = "true"
+            logger.info("thunes sandbox simulation headers enabled mode=%s", self.mode)
+        if request_id:
+            h["X-Request-ID"] = request_id
         return h
 
     @staticmethod
@@ -86,6 +92,8 @@ class ThunesProvider:
             v = (settings.THUNES_PAYER_ID_TG or "").strip()
         elif c == "BJ":
             v = (settings.THUNES_PAYER_ID_BJ or "").strip()
+        elif c == "GH":
+            v = (settings.THUNES_PAYER_ID_GH or "").strip()
         else:
             v = ""
         if not v:
@@ -141,6 +149,8 @@ class ThunesProvider:
         source_currency = (settings.THUNES_SOURCE_CURRENCY or "USD").strip().upper()
         source_country_iso3 = (settings.THUNES_SOURCE_COUNTRY_ISO3 or "USA").strip().upper()
 
+        provider_response: dict[str, Any] = {}
+
         # 1) Create quotation  POST /quotations  :contentReference[oaicite:14]{index=14}
         q_payload = {
             "external_id": external_id,
@@ -164,16 +174,23 @@ class ThunesProvider:
             # SOURCE_AMOUNT
             q_payload["source"]["amount"] = destination_amount
 
+        request_id = (payout.get("request_id") or "").strip()
         try:
             q_url = f"{self.base_url}/quotations"
+            provider_response["quote_request"] = q_payload
             q_resp = requests.post(
                 q_url,
                 json=q_payload,
-                headers=self._headers(),
+                headers=self._build_headers(request_id),
                 auth=self._auth(),
                 timeout=self.timeout_s,
             )
             q_data = _safe_json(q_resp)
+            provider_response["quote_response"] = {
+                "http_status": q_resp.status_code,
+                "data": q_data,
+                "request_url": q_url,
+            }
             if q_resp.status_code not in (200, 201):
                 return _map_thunes_http_failure(
                     "THUNES_QUOTATION_FAILED",
@@ -187,9 +204,13 @@ class ThunesProvider:
                 return ProviderResult(
                     status="FAILED",
                     error="THUNES_QUOTATION_MISSING_ID",
-                    response={"http_status": q_resp.status_code, "data": q_data, "request_url": q_url},
+                    response=provider_response,
                     retryable=False,
                 )
+            provider_response["quotation_id"] = quotation_id
+            quote_meta = _extract_quote_meta(q_data)
+            if quote_meta:
+                provider_response["quote_meta"] = quote_meta
 
             # 2) Create transaction  POST /quotations/{id}/transactions :contentReference[oaicite:15]{index=15}
             phone = (payout.get("phone_e164") or "").strip()
@@ -215,14 +236,20 @@ class ThunesProvider:
             }
 
             t_url = f"{self.base_url}/quotations/{quotation_id}/transactions"
+            provider_response["transaction_create_request"] = t_payload
             t_resp = requests.post(
                 t_url,
                 json=t_payload,
-                headers=self._headers(),
+                headers=self._build_headers(request_id),
                 auth=self._auth(),
                 timeout=self.timeout_s,
             )
             t_data = _safe_json(t_resp)
+            provider_response["transaction_create_response"] = {
+                "http_status": t_resp.status_code,
+                "data": t_data,
+                "request_url": t_url,
+            }
             if t_resp.status_code not in (200, 201):
                 return _map_thunes_http_failure(
                     "THUNES_CREATE_TX_FAILED",
@@ -236,19 +263,25 @@ class ThunesProvider:
                 return ProviderResult(
                     status="FAILED",
                     error="THUNES_TRANSACTION_MISSING_ID",
-                    response={"http_status": t_resp.status_code, "data": t_data, "request_url": t_url},
+                    response=provider_response,
                     retryable=False,
                 )
+            provider_response["transaction_id"] = transaction_id
 
             # 3) Confirm transaction  POST /transactions/{id}/confirm :contentReference[oaicite:16]{index=16}
             c_url = f"{self.base_url}/transactions/{transaction_id}/confirm"
             c_resp = requests.post(
                 c_url,
-                headers=self._headers(),
+                headers=self._build_headers(request_id),
                 auth=self._auth(),
                 timeout=self.timeout_s,
             )
             c_data = _safe_json(c_resp)
+            provider_response["confirm_response"] = {
+                "http_status": c_resp.status_code,
+                "data": c_data,
+                "request_url": c_url,
+            }
 
             if c_resp.status_code not in (200, 201, 202):
                 return _map_thunes_http_failure(
@@ -263,13 +296,7 @@ class ThunesProvider:
             return ProviderResult(
                 status="SENT",
                 provider_ref=str(transaction_id),
-                response={
-                    "http_status": c_resp.status_code,
-                    "quotation_id": quotation_id,
-                    "transaction_id": transaction_id,
-                    "data": c_data,
-                    "request_url": c_url,
-                },
+                response=provider_response,
                 error=None,
                 retryable=True,
             )
@@ -297,11 +324,12 @@ class ThunesProvider:
             return ProviderResult(status="SENT", error="MISSING_PROVIDER_REF", retryable=True)
 
         url = f"{self.base_url}/transactions/{provider_ref}"
+        request_id = (payout.get("request_id") or "").strip()
 
         try:
             resp = requests.get(
                 url,
-                headers=self._headers(),
+                headers=self._build_headers(request_id),
                 auth=self._auth(),
                 timeout=self.timeout_s,
             )
@@ -400,3 +428,21 @@ def _safe_json(resp) -> Dict[str, Any]:
         return j if isinstance(j, dict) else {"raw": j}
     except Exception:
         return {"raw_text": getattr(resp, "text", "")}
+
+
+def _extract_quote_meta(data: Dict[str, Any]) -> Dict[str, Any]:
+    if not isinstance(data, dict):
+        return {}
+    meta: Dict[str, Any] = {}
+    for key in (
+        "fee",
+        "fees",
+        "rate",
+        "fx_rate",
+        "exchange_rate",
+        "source_amount",
+        "destination_amount",
+    ):
+        if key in data:
+            meta[key] = data.get(key)
+    return meta

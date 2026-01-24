@@ -119,10 +119,68 @@ alembic upgrade head
 python scripts/seed_staging.py
 
 # Canary smoke
+$env:STAGING_GATE_KEY="<STAGING_GATE_KEY>"
+. .\scripts\_env_staging.ps1
+. .\scripts\_env_staging_from_fly.ps1
 $env:STAGING_BASE_URL="https://staging.example.com"
 python scripts/canary_smoke.py
 
 # If green, promote
+```
+
+\## Rotate staging passwords safely
+
+```powershell
+# 1) Update secrets in Fly
+fly secrets set -a nepxy-staging USER_PASSWORD="new-user-pass" ADMIN_PASSWORD="new-admin-pass"
+
+# 2) Sync DB password hashes to secrets
+$headers = @{ "X-Bootstrap-Admin-Secret" = $env:BOOTSTRAP_ADMIN_SECRET }
+Invoke-RestMethod -Method Post -Uri "https://nepxy-staging.fly.dev/debug/bootstrap-staging-users" -Headers $headers
+
+# 3) Validate with canary
+python scripts/canary_smoke.py
+```
+
+\## Rotate webhook secret safely
+
+```powershell
+# 1) Update the webhook secret in Fly
+fly secrets set -a nepxy-staging TMONEY_WEBHOOK_SECRET="new-tmoney-secret"
+
+# 2) Reload env (local) and validate with canary
+. .\scripts\_env_staging_from_fly.ps1
+python scripts/canary_smoke.py
+```
+
+\## Run staging reset + canary
+
+```powershell
+.\scripts\staging_reset_and_canary.ps1
+```
+
+\## Rotate staging secrets
+
+```powershell
+. .\scripts\rotate_staging_secrets.ps1
+```
+
+\## Thunes canary
+
+```powershell
+# Ghana (explicit THUNES)
+python scripts/canary_thunes.py --country GH --phone "+233200000000"
+
+# Benin (explicit THUNES)
+python scripts/canary_thunes.py --country BJ --phone "+22990009911"
+
+# Auto provider selection
+python scripts/canary_thunes.py --country GH --phone "+233200000000" --provider AUTO
+
+# Loop over multiple countries
+@("GH","BJ") | ForEach-Object {
+  python scripts/canary_thunes.py --country $_ --phone "+233200000000"
+}
 ```
 
 \## Backups
