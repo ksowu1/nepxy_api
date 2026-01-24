@@ -1,5 +1,3 @@
-
-
 # tests/conftest.py
 
 from __future__ import annotations
@@ -10,6 +8,10 @@ import random
 from uuid import uuid4
 from dataclasses import dataclass
 from typing import Dict, Optional, Any, List
+
+# Ensure ENV is 'dev' for tests so dev-only debug routes are enabled during TestClient import
+# This must be set before importing the application (main.app)
+os.environ.setdefault("ENV", "dev")
 
 import pytest
 from fastapi.testclient import TestClient
@@ -27,7 +29,6 @@ SYSTEM_OWNER_ID = os.getenv("SYSTEM_OWNER_ID", "00000000-0000-0000-0000-00000000
 os.environ.setdefault("TMONEY_WEBHOOK_SECRET", "dev_secret_tmoney")
 os.environ.setdefault("FLOOZ_WEBHOOK_SECRET", "dev_secret_flooz")
 os.environ.setdefault("MOMO_WEBHOOK_SECRET", "dev_secret_momo")
-
 
 @dataclass
 class AuthedUser:
