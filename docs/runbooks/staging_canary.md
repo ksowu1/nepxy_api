@@ -14,6 +14,13 @@
    python scripts\canary_smoke.py
    ```
 
+## Staging Recovery Script
+If staging is in a bad state (credentials rotated, canary failing), run:
+```powershell
+.\scripts\staging_recover.ps1
+```
+This loads staging env, restarts the Fly machine, and runs the canary with bootstrap enabled.
+
 ## Common failure modes
 - `STAGING_GATE_KEY_REQUIRED`: ensure `STAGING_GATE_KEY` is loaded and the request includes `X-Staging-Key`.
 - `INVALID_CREDENTIALS`: rotate Fly secrets and re-bootstrap staging users before retrying.
