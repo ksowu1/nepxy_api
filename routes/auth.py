@@ -2,7 +2,8 @@
 
 
 # routes/auth.py
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
+import logging
 from pydantic import BaseModel, EmailStr
 from uuid import UUID
 
@@ -17,8 +18,10 @@ from security import (
 )
 from schemas import RegisterRequest, RegisterResponse
 from services.invite_only import is_email_allowed, is_invite_only_enabled
+from rate_limit import rate_limit_enabled, rate_limit_login_per_min, rate_limit_or_429
 
 router = APIRouter(prefix="/v1/auth", tags=["auth"])
+logger = logging.getLogger("nexapay.auth")
 
 
 class LoginRequest(BaseModel):
@@ -51,7 +54,13 @@ def _enforce_invite_only(email: str) -> None:
 
 
 @router.post("/login", response_model=LoginResponse)
-def login(body: LoginRequest):
+def login(body: LoginRequest, req: Request):
+    if rate_limit_enabled():
+        client_ip = req.client.host if req.client else "unknown"
+        email_key = str(body.email).strip().lower()
+        limit = rate_limit_login_per_min()
+        rate_limit_or_429(key=f"login:ip:{client_ip}", limit=limit, window_seconds=60)
+        rate_limit_or_429(key=f"login:email:{email_key}", limit=limit, window_seconds=60)
     _enforce_invite_only(body.email)
 
     with get_conn() as conn:
@@ -68,11 +77,21 @@ def login(body: LoginRequest):
             row = cur.fetchone()
 
     if not row:
+        logger.info(
+            "auth_login_invalid request_id=%s email=%s",
+            getattr(req.state, "request_id", None),
+            str(body.email),
+        )
         raise HTTPException(status_code=401, detail="INVALID_CREDENTIALS")
 
     user_id, password_hash_db = row
 
     if not verify_password(body.password, password_hash_db):
+        logger.info(
+            "auth_login_invalid request_id=%s email=%s",
+            getattr(req.state, "request_id", None),
+            str(body.email),
+        )
         raise HTTPException(status_code=401, detail="INVALID_CREDENTIALS")
 
     access = create_access_token(sub=str(user_id))
@@ -81,9 +100,13 @@ def login(body: LoginRequest):
 
 
 @router.post("/refresh", response_model=RefreshResponse)
-def refresh(body: RefreshRequest):
+def refresh(body: RefreshRequest, req: Request):
     user_id = validate_refresh_token(body.refresh_token)
     if not user_id:
+        logger.info(
+            "auth_refresh_invalid request_id=%s",
+            getattr(req.state, "request_id", None),
+        )
         raise HTTPException(status_code=401, detail="INVALID_REFRESH_TOKEN")
 
     access = create_access_token(sub=str(user_id))

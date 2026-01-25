@@ -12,6 +12,7 @@ import uuid
 import logging
 
 from db import get_conn
+from services.observability import get_request_id
 from app.payouts.repository import (
     update_status,
     claim_pending_payouts,
@@ -113,7 +114,11 @@ def process_once(*, batch_size: int = 50, stale_seconds: int = DEFAULT_STALE_SEC
         pending = claim_pending_payouts(conn, batch_size=batch_size)
         stale_sent = claim_stale_sent_payouts(conn, batch_size=batch_size, stale_after_seconds=stale_seconds)
 
-        print(f"[worker] found_pending={len(pending)} found_stale_sent={len(stale_sent)}")
+        req_id = get_request_id()
+        if req_id:
+            print(f"[worker] request_id={req_id} found_pending={len(pending)} found_stale_sent={len(stale_sent)}")
+        else:
+            print(f"[worker] found_pending={len(pending)} found_stale_sent={len(stale_sent)}")
 
         # process each payout independently so one bad row doesn't kill the whole batch
         for p in pending:

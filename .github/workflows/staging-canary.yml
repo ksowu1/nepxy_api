@@ -1,0 +1,41 @@
+name: Staging Canary
+
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows: ["Fly Deploy (staging)"]
+    types: [completed]
+
+jobs:
+  canary:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Canary smoke (staging)
+        env:
+          STAGING_BASE_URL: ${{ secrets.STAGING_BASE_URL }}
+          STAGING_GATE_KEY: ${{ secrets.STAGING_GATE_KEY }}
+          STAGING_USER_EMAIL: ${{ secrets.STAGING_USER_EMAIL }}
+          STAGING_USER_PASSWORD: ${{ secrets.STAGING_USER_PASSWORD }}
+          STAGING_ADMIN_EMAIL: ${{ secrets.STAGING_ADMIN_EMAIL }}
+          STAGING_ADMIN_PASSWORD: ${{ secrets.STAGING_ADMIN_PASSWORD }}
+          TMONEY_WEBHOOK_SECRET: ${{ secrets.TMONEY_WEBHOOK_SECRET }}
+          BOOTSTRAP_ADMIN_SECRET: ${{ secrets.BOOTSTRAP_ADMIN_SECRET }}
+          CANARY_ALLOW_BOOTSTRAP: ${{ secrets.CANARY_ALLOW_BOOTSTRAP || '1' }}
+        run: |
+          python scripts/canary_smoke.py

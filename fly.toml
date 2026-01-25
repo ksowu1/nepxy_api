@@ -8,6 +8,9 @@ primary_region = 'ord'
 
 [build]
 
+[env]
+  PORT = "8001"
+
 [http_service]
   internal_port = 8001
   force_https = true
@@ -19,7 +22,7 @@ primary_region = 'ord'
     interval = '15s'
     timeout = '2s'
     method = 'GET'
-    path = '/healthz'
+    path = '/health'
     protocol = 'http'
     grace_period = '10s'
   [[http_service.checks]]

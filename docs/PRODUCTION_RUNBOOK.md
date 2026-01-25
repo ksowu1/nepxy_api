@@ -1,6 +1,7 @@
 # NepXy Production Runbook
 
 Practical steps for deploy, verification, incident response, and rollback.
+See `docs/fly_prod_setup.md` for Fly app config separation and production secrets.
 
 ## Deploy
 

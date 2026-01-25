@@ -7,9 +7,15 @@ from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from rate_limit import allow_token_bucket
+from rate_limit import (
+    allow_token_bucket,
+    rate_limit_enabled,
+    rate_limit_login_per_min,
+    rate_limit_webhook_per_min,
+)
 from services.metrics import increment_http_requests
 from settings import settings
+from services.observability import set_request_id
 
 logger = logging.getLogger("nexapay.http")
 
@@ -45,16 +51,41 @@ class StagingGateMiddleware(BaseHTTPMiddleware):
 
 class RequestContextMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
-        req_id = request.headers.get("X-Request-Id") or str(uuid.uuid4())
+        req_id = (
+            request.headers.get("X-Request-ID")
+            or request.headers.get("X-Request-Id")
+            or str(uuid.uuid4())
+        )
         start = time.time()
+        client_ip = request.client.host if request.client else "unknown"
 
         # attach to request state
         request.state.request_id = req_id
+        set_request_id(req_id)
+        logger.info(
+            "http_request_start request_id=%s method=%s path=%s client_ip=%s",
+            req_id,
+            request.method,
+            request.url.path,
+            client_ip,
+        )
 
         response = None
         try:
             response = await call_next(request)
-            return response
+        except HTTPException as exc:
+            headers = dict(getattr(exc, "headers", None) or {})
+            response = JSONResponse(status_code=exc.status_code, content={"detail": exc.detail}, headers=headers)
+            error_code, reason = _extract_error_info(exc.detail)
+            logger.warning(
+                "http_request_error request_id=%s method=%s path=%s http_status=%s error_code=%s reason=%s",
+                req_id,
+                request.method,
+                request.url.path,
+                exc.status_code,
+                error_code,
+                reason,
+            )
         except Exception:
             logger.exception(
                 "http_request error request_id=%s method=%s path=%s",
@@ -62,26 +93,50 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
                 request.method,
                 request.url.path,
             )
-            raise
+            response = JSONResponse(status_code=500, content={"detail": "Internal server error"})
         finally:
             duration_ms = int((time.time() - start) * 1000)
             status = getattr(response, "status_code", 500)
 
             if response is not None:
-                response.headers["X-Request-Id"] = req_id
+                response.headers["X-Request-ID"] = req_id
                 route_obj = request.scope.get("route")
                 route = getattr(route_obj, "path", request.url.path)
                 increment_http_requests(route, status)
 
             logger.info(
-                "http_request request_id=%s method=%s path=%s status=%s duration_ms=%s client=%s",
+                "http_request_end request_id=%s method=%s path=%s status=%s duration_ms=%s client_ip=%s",
                 req_id,
                 request.method,
                 request.url.path,
                 status,
                 duration_ms,
-                request.client.host if request.client else None,
+                client_ip,
             )
+        return response
+
+
+class MaintenanceModeMiddleware(BaseHTTPMiddleware):
+    def __init__(self, app):
+        super().__init__(app)
+
+    async def dispatch(self, request: Request, call_next):
+        if not _maintenance_enabled():
+            return await call_next(request)
+
+        path = request.url.path or ""
+        method = (request.method or "").upper()
+        if method == "GET" and path == "/health":
+            return await call_next(request)
+        if path.startswith("/v1/webhooks") or path.startswith("/webhooks"):
+            return await call_next(request)
+
+        env = (os.getenv("ENV") or os.getenv("ENVIRONMENT") or settings.ENV or "dev").strip().lower()
+        if env in {"dev", "staging"}:
+            if path == "/openapi.json" or path.startswith("/docs"):
+                return await call_next(request)
+
+        return JSONResponse(status_code=503, content={"detail": "MAINTENANCE_MODE"})
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
@@ -89,22 +144,25 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         self,
         app,
         *,
-        auth_limit: int = 120,
+        auth_limit: int | None = None,
         auth_window_seconds: int = 60,
-        webhook_limit: int = 300,
+        webhook_limit: int | None = None,
         webhook_window_seconds: int = 60,
     ):
         super().__init__(app)
-        self.auth_limit = int(auth_limit)
+        self.auth_limit = int(auth_limit or rate_limit_login_per_min())
         self.auth_window_seconds = int(auth_window_seconds)
-        self.webhook_limit = int(webhook_limit)
+        self.webhook_limit = int(webhook_limit or rate_limit_webhook_per_min())
         self.webhook_window_seconds = int(webhook_window_seconds)
 
     async def dispatch(self, request: Request, call_next):
+        if not rate_limit_enabled():
+            return await call_next(request)
+
         path = request.url.path or ""
         group = None
-        if path.startswith("/v1/auth/"):
-            group = "auth"
+        if path == "/v1/auth/login":
+            group = "login"
             limit = self.auth_limit
             window = self.auth_window_seconds
         elif path.startswith("/v1/webhooks/"):
@@ -122,8 +180,13 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         if ok:
             return await call_next(request)
 
-        req_id = getattr(request.state, "request_id", None) or request.headers.get("X-Request-Id") or str(uuid.uuid4())
-        headers = {"X-Request-Id": req_id}
+        req_id = (
+            getattr(request.state, "request_id", None)
+            or request.headers.get("X-Request-ID")
+            or request.headers.get("X-Request-Id")
+            or str(uuid.uuid4())
+        )
+        headers = {"X-Request-ID": req_id}
         return JSONResponse(status_code=429, content={"detail": "RATE_LIMITED"}, headers=headers)
 
 
@@ -148,3 +211,34 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                 )
 
         return response
+
+
+def _maintenance_enabled() -> bool:
+    raw = (os.getenv("MAINTENANCE_MODE") or "0").strip().lower()
+    return raw in {"1", "true"}
+
+
+def _extract_error_info(detail) -> tuple[str | None, str | None]:
+    error_code = None
+    reason = None
+    if isinstance(detail, dict):
+        error_code = detail.get("error") or detail.get("detail") or detail.get("code")
+        reason = detail.get("reason") or detail.get("message") or None
+        if reason is None:
+            reason = str(detail)
+    elif isinstance(detail, str):
+        error_code = detail
+        reason = detail
+    else:
+        error_code = str(detail)
+        reason = str(detail)
+
+    if error_code in {
+        "INVALID_CREDENTIALS",
+        "STAGING_GATE_KEY_REQUIRED",
+        "INVALID_SIGNATURE",
+        "PROVIDER_TIMEOUT",
+        "PROVIDER_REJECTED",
+    }:
+        return error_code, reason
+    return error_code, reason

@@ -128,3 +128,16 @@ python scripts/canary_smoke.py
 \## Backups
 
 See `docs/BACKUPS.md` for backup/restore procedures.
+
+\## Production notes
+
+- Env var reference: `docs/env.production.md`
+- Staging guide: `docs/staging.md`
+- Release runbook: `docs/release_runbook.md`
+- Rollback runbook: `docs/runbooks/rollback.md`
+- Incident triage: `docs/runbooks/incident-triage.md`
+- Prod smoke check: `scripts/prod_smoke.ps1` with `BASE_URL`, `SMOKE_EMAIL`, `SMOKE_PASSWORD`, optional `STAGING_GATE_KEY`
+
+\## Observability
+
+- See `docs/observability.md` for request tracing and log queries.
