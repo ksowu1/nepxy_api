@@ -79,8 +79,8 @@ jobs:
 
       - name: Alembic current matches head
         run: |
-          current=$(alembic current | tail -n 1 | awk '{print $NF}')
-          head_rev=$(alembic heads -q | head -n 1)
+          current=$(alembic current | tail -n 1 | awk '{print $1}')
+          head_rev=$(alembic heads | tail -n 1 | awk '{print $1}')
           if [ -z "$current" ] || [ "$current" != "$head_rev" ]; then
             echo "Alembic current ($current) does not match head ($head_rev)" >&2
             alembic current
