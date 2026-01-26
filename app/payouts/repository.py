@@ -73,41 +73,73 @@ def claim_pending_payouts(conn, *, batch_size: int) -> list[dict[str, Any]]:
 
 def claim_stale_sent_payouts(conn, *, batch_size: int, stale_after_seconds: int) -> list[dict[str, Any]]:
     cur = conn.cursor()
-    cur.execute(
-        """
-        WITH picked AS (
-          SELECT p.id
-          FROM app.mobile_money_payouts p
-          WHERE p.status = 'SENT'
-            AND (p.next_retry_at IS NULL OR p.next_retry_at <= now())
-            AND (
-              (p.last_attempt_at IS NOT NULL AND p.last_attempt_at <= (now() - (%s || ' seconds')::interval))
-              OR
-              (p.last_attempt_at IS NULL AND p.updated_at <= (now() - (%s || ' seconds')::interval))
+    if stale_after_seconds <= 0:
+        cur.execute(
+            """
+            WITH picked AS (
+              SELECT p.id
+              FROM app.mobile_money_payouts p
+              WHERE p.status = 'SENT'
+                AND (p.next_retry_at IS NULL OR p.next_retry_at <= now())
+              ORDER BY p.next_retry_at NULLS FIRST, p.updated_at
+              LIMIT %s
+              FOR UPDATE SKIP LOCKED
             )
-          ORDER BY p.next_retry_at NULLS FIRST, p.updated_at
-          LIMIT %s
-          FOR UPDATE SKIP LOCKED
+            SELECT
+              p.id,
+              p.transaction_id,
+              COALESCE(NULLIF(btrim(upper(p.provider)), ''), btrim(upper(tx.provider))) AS provider,
+              COALESCE(p.phone_e164, tx.phone_e164) AS phone_e164,
+              p.provider_ref,
+              p.attempt_count,
+              p.last_attempt_at,
+              p.next_retry_at,
+              tx.amount_cents,
+              tx.currency,
+              tx.external_ref,
+              tx.country
+            FROM app.mobile_money_payouts p
+            JOIN picked ON picked.id = p.id
+            LEFT JOIN ledger.ledger_transactions tx ON tx.id = p.transaction_id
+            """,
+            (batch_size,),
         )
-        SELECT
-          p.id,
-          p.transaction_id,
-          COALESCE(NULLIF(btrim(upper(p.provider)), ''), btrim(upper(tx.provider))) AS provider,
-          COALESCE(p.phone_e164, tx.phone_e164) AS phone_e164,
-          p.provider_ref,
-          p.attempt_count,
-          p.last_attempt_at,
-          p.next_retry_at,
-          tx.amount_cents,
-          tx.currency,
-          tx.external_ref,
-          tx.country
-        FROM app.mobile_money_payouts p
-        JOIN picked ON picked.id = p.id
-        LEFT JOIN ledger.ledger_transactions tx ON tx.id = p.transaction_id
-        """,
-        (stale_after_seconds, stale_after_seconds, batch_size),
-    )
+    else:
+        cur.execute(
+            """
+            WITH picked AS (
+              SELECT p.id
+              FROM app.mobile_money_payouts p
+              WHERE p.status = 'SENT'
+                AND (p.next_retry_at IS NULL OR p.next_retry_at <= now())
+                AND (
+                  (p.last_attempt_at IS NOT NULL AND p.last_attempt_at <= (now() - (%s || ' seconds')::interval))
+                  OR
+                  (p.last_attempt_at IS NULL AND p.updated_at <= (now() - (%s || ' seconds')::interval))
+                )
+              ORDER BY p.next_retry_at NULLS FIRST, p.updated_at
+              LIMIT %s
+              FOR UPDATE SKIP LOCKED
+            )
+            SELECT
+              p.id,
+              p.transaction_id,
+              COALESCE(NULLIF(btrim(upper(p.provider)), ''), btrim(upper(tx.provider))) AS provider,
+              COALESCE(p.phone_e164, tx.phone_e164) AS phone_e164,
+              p.provider_ref,
+              p.attempt_count,
+              p.last_attempt_at,
+              p.next_retry_at,
+              tx.amount_cents,
+              tx.currency,
+              tx.external_ref,
+              tx.country
+            FROM app.mobile_money_payouts p
+            JOIN picked ON picked.id = p.id
+            LEFT JOIN ledger.ledger_transactions tx ON tx.id = p.transaction_id
+            """,
+            (stale_after_seconds, stale_after_seconds, batch_size),
+        )
     cols = [d[0] for d in cur.description]
     return [dict(zip(cols, row)) for row in cur.fetchall()]
 

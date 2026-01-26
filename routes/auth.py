@@ -2,7 +2,7 @@
 
 
 # routes/auth.py
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, EmailStr
 from uuid import UUID
 
@@ -17,6 +17,7 @@ from security import (
 )
 from schemas import RegisterRequest, RegisterResponse
 from services.invite_only import is_email_allowed, is_invite_only_enabled
+from rate_limit import rate_limit_enabled, rate_limit_login_per_min, rate_limit_or_429
 
 router = APIRouter(prefix="/v1/auth", tags=["auth"])
 
@@ -51,7 +52,13 @@ def _enforce_invite_only(email: str) -> None:
 
 
 @router.post("/login", response_model=LoginResponse)
-def login(body: LoginRequest):
+def login(body: LoginRequest, req: Request):
+    if rate_limit_enabled():
+        client_ip = req.client.host if req.client else "unknown"
+        email_key = str(body.email).strip().lower()
+        limit = rate_limit_login_per_min()
+        rate_limit_or_429(key=f"login:ip:{client_ip}", limit=limit, window_seconds=60)
+        rate_limit_or_429(key=f"login:email:{email_key}", limit=limit, window_seconds=60)
     _enforce_invite_only(body.email)
 
     with get_conn() as conn:

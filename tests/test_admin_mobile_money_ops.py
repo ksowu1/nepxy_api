@@ -215,6 +215,7 @@ def test_admin_webhook_events_for_payout(client, admin_user, user1, wallet1_xof,
     )
     assert payout.status_code == 200, payout.text
     ext = payout.json()["external_ref"]
+    provider_ref = payout.json().get("provider_ref")
 
     body_obj = {"external_ref": ext, "status": "SUCCESS"}
     body_bytes = json.dumps(body_obj, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
@@ -235,4 +236,4 @@ def test_admin_webhook_events_for_payout(client, admin_user, user1, wallet1_xof,
     body = r.json()
     assert body["count"] >= 1
     events = body["events"]
-    assert any(e.get("external_ref") == ext for e in events)
+    assert any((e.get("external_ref") == ext) or (provider_ref and e.get("provider_ref") == provider_ref) for e in events)

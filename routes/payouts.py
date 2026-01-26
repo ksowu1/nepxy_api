@@ -187,14 +187,29 @@ def _discover_entries_table(cur) -> Tuple[str, str]:
     return str(row[0]), str(row[1])
 
 
-def _wallet_id_for_tx(cur, entry_ref: str, tx_id: UUID) -> UUID:
+def _wallet_id_for_tx_owned(
+    cur,
+    *,
+    entry_ref: str,
+    wallet_ref: str,
+    wallet_col: str,
+    tx_id: UUID,
+    user_id: UUID,
+) -> UUID:
     cur.execute(
-        f"SELECT wallet_id FROM {entry_ref} WHERE transaction_id=%s::uuid LIMIT 1;",
-        (str(tx_id),),
+        f"""
+        SELECT e.wallet_id
+        FROM {entry_ref} e
+        JOIN {wallet_ref} w ON w.{wallet_col} = e.wallet_id
+        WHERE e.transaction_id = %s::uuid
+          AND w.owner_id = %s::uuid
+        LIMIT 1;
+        """,
+        (str(tx_id), str(user_id)),
     )
     row = cur.fetchone()
     if not row or not row[0]:
-        raise HTTPException(status_code=404, detail="Payout not found")
+        raise HTTPException(status_code=404, detail="WALLET_NOT_FOUND")
     return UUID(str(row[0]))
 
 
@@ -212,8 +227,17 @@ def get_payout_by_transaction_id(
             entry_schema, entry_table = _discover_entries_table(cur)
             entry_ref = f"{_qident(entry_schema)}.{_qident(entry_table)}"
 
-            wallet_id = _wallet_id_for_tx(cur, entry_ref, transaction_id)
-            _assert_wallet_owned_by_user(cur, conn, wallet_id, user.user_id)
+            wallet_schema, wallet_table, wallet_col = _discover_wallet_table(cur)
+            wallet_ref = f"{_qident(wallet_schema)}.{_qident(wallet_table)}"
+            wallet_col_ref = _qident(wallet_col)
+            _wallet_id_for_tx_owned(
+                cur,
+                entry_ref=entry_ref,
+                wallet_ref=wallet_ref,
+                wallet_col=wallet_col_ref,
+                tx_id=transaction_id,
+                user_id=user.user_id,
+            )
 
             cur.execute(
                 """

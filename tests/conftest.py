@@ -188,6 +188,11 @@ def _cash_in_momo(client: TestClient, token: str, wallet_id: str, amount_cents: 
 
 @pytest.fixture(scope="session")
 def user1(client: TestClient) -> AuthedUser:
+    _register_best_effort(
+        client,
+        os.getenv("TEST_USER1_EMAIL", "test@nexapay.io"),
+        os.getenv("TEST_USER1_PASSWORD", "password123"),
+    )
     return _login(
         client,
         os.getenv("TEST_USER1_EMAIL", "test@nexapay.io"),
@@ -197,6 +202,11 @@ def user1(client: TestClient) -> AuthedUser:
 
 @pytest.fixture(scope="session")
 def user2(client: TestClient) -> AuthedUser:
+    _register_best_effort(
+        client,
+        os.getenv("TEST_USER2_EMAIL", "other@nexapay.io"),
+        os.getenv("TEST_USER2_PASSWORD", "password123"),
+    )
     return _login(
         client,
         os.getenv("TEST_USER2_EMAIL", "other@nexapay.io"),
@@ -296,6 +306,7 @@ def _clean_payouts_table():
     with get_conn() as conn:
         cur = conn.cursor()
         cur.execute("ALTER TABLE app.mobile_money_payouts ADD COLUMN IF NOT EXISTS quote jsonb;")
+        cur.execute("ALTER TABLE app.mobile_money_payouts ADD COLUMN IF NOT EXISTS request_id text;")
         cur.execute("TRUNCATE app.mobile_money_payouts RESTART IDENTITY CASCADE;")
         conn.commit()
     yield
@@ -326,6 +337,32 @@ def _ensure_webhook_events_table():
             cur.execute("ALTER TABLE app.webhook_events ADD COLUMN IF NOT EXISTS payload_json jsonb;")
             cur.execute("ALTER TABLE app.webhook_events ADD COLUMN IF NOT EXISTS payload_summary jsonb;")
             cur.execute("ALTER TABLE app.webhook_events ADD COLUMN IF NOT EXISTS signature_valid boolean;")
+            cur.execute("ALTER TABLE app.webhook_events ADD COLUMN IF NOT EXISTS request_id text;")
+            cur.execute("""
+            CREATE TABLE IF NOT EXISTS public.webhook_events (
+              id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+              provider text NOT NULL,
+              path text NOT NULL,
+              request_id text,
+              signature text,
+              signature_valid boolean,
+              signature_error text,
+              headers jsonb,
+              body jsonb,
+              body_raw text,
+              provider_ref text,
+              external_ref text,
+              status_raw text,
+              payout_transaction_id text,
+              payout_status_before text,
+              payout_status_after text,
+              update_applied boolean,
+              ignored boolean,
+              ignore_reason text,
+              received_at timestamptz NOT NULL DEFAULT now()
+            );
+            """)
+            cur.execute("ALTER TABLE public.webhook_events ADD COLUMN IF NOT EXISTS request_id text;")
         conn.commit()
     yield
 

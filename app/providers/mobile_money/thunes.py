@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from typing import Any, Dict, Optional
+import logging
 import requests
 
 from settings import settings
@@ -12,6 +13,8 @@ from app.providers.base import ProviderResult
 
 # --- Thunes "Money Transfer API v2" base path is: {API_ENDPOINT}/v2/money-transfer
 # Docs: Base URL `/v2/money-transfer` and Basic Auth.  :contentReference[oaicite:10]{index=10}
+
+logger = logging.getLogger("nexapay.thunes")
 
 
 class ThunesProvider:
@@ -60,6 +63,11 @@ class ThunesProvider:
             # Thunes supports x-simulated-transaction=true for sandbox simulation :contentReference[oaicite:12]{index=12}
             h["x-simulated-transaction"] = "true"
         return h
+
+    def _build_headers(self) -> Dict[str, str]:
+        if self.use_simulation:
+            logger.info("thunes sandbox simulation headers enabled")
+        return self._headers()
 
     @staticmethod
     def map_thunes_status(status_raw: str) -> tuple[str, bool, str | None]:
@@ -269,6 +277,27 @@ class ThunesProvider:
                     "transaction_id": transaction_id,
                     "data": c_data,
                     "request_url": c_url,
+                    "quote_request": q_payload,
+                    "quote_response": {
+                        "http_status": q_resp.status_code,
+                        "data": q_data,
+                        "request_url": q_url,
+                    },
+                    "quote_meta": {
+                        "fee": q_data.get("fee"),
+                        "rate": q_data.get("rate"),
+                    },
+                    "transaction_create_request": t_payload,
+                    "transaction_create_response": {
+                        "http_status": t_resp.status_code,
+                        "data": t_data,
+                        "request_url": t_url,
+                    },
+                    "confirm_response": {
+                        "http_status": c_resp.status_code,
+                        "data": c_data,
+                        "request_url": c_url,
+                    },
                 },
                 error=None,
                 retryable=True,
