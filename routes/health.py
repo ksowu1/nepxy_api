@@ -51,6 +51,19 @@ def healthz():
     }
 
 
+@router.get("/health")
+def health():
+    db_ok, db_error = _check_db()
+    return {
+        "ok": True,
+        "version": os.getenv("APP_VERSION", "1.0.0"),
+        "git_sha": os.getenv("GIT_SHA"),
+        "db_ok": db_ok,
+        "db_error": db_error,
+        "mm_mode": os.getenv("MM_MODE", ""),
+    }
+
+
 @router.get("/readyz")
 def readyz():
     db_ok, db_error = _check_db()

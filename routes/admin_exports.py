@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import csv
 import io
-from datetime import date
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Iterable
 
 from fastapi import APIRouter, Depends, Query
@@ -52,6 +52,12 @@ def export_payouts_csv(
         "provider_ref",
     ]
 
+    local_tz = datetime.now().astimezone().tzinfo
+    start_local = datetime.combine(from_date, time.min).replace(tzinfo=local_tz)
+    end_local = datetime.combine(to_date, time.min).replace(tzinfo=local_tz) + timedelta(days=1)
+    start_utc = start_local.astimezone(timezone.utc)
+    end_utc = end_local.astimezone(timezone.utc)
+
     sql = """
         SELECT
           p.transaction_id::text AS transaction_id,
@@ -72,8 +78,8 @@ def export_payouts_csv(
           p.provider_ref
         FROM app.mobile_money_payouts p
         LEFT JOIN ledger.ledger_transactions tx ON tx.id = p.transaction_id
-        WHERE COALESCE(tx.created_at, p.created_at) >= %s::date
-          AND COALESCE(tx.created_at, p.created_at) < (%s::date + interval '1 day')
+        WHERE COALESCE(tx.created_at, p.created_at) >= %s
+          AND COALESCE(tx.created_at, p.created_at) < %s
         ORDER BY COALESCE(tx.created_at, p.created_at) ASC
     """
 
@@ -81,7 +87,7 @@ def export_payouts_csv(
         with get_conn() as conn:
             with conn.cursor() as cur:
                 set_db_actor(cur, admin.user_id)
-                cur.execute(sql, (from_date, to_date))
+                cur.execute(sql, (start_utc, end_utc))
                 for row in cur:
                     yield row
 
@@ -107,6 +113,12 @@ def export_ledger_csv(
         "memo",
     ]
 
+    local_tz = datetime.now().astimezone().tzinfo
+    start_local = datetime.combine(from_date, time.min).replace(tzinfo=local_tz)
+    end_local = datetime.combine(to_date, time.min).replace(tzinfo=local_tz) + timedelta(days=1)
+    start_utc = start_local.astimezone(timezone.utc)
+    end_utc = end_local.astimezone(timezone.utc)
+
     sql = """
         SELECT
           e.id::text AS entry_id,
@@ -119,8 +131,8 @@ def export_ledger_csv(
           COALESCE(e.memo, '') AS memo
         FROM ledger.ledger_entries e
         JOIN ledger.ledger_accounts a ON a.id = e.account_id
-        WHERE e.created_at >= %s::date
-          AND e.created_at < (%s::date + interval '1 day')
+        WHERE e.created_at >= %s
+          AND e.created_at < %s
         ORDER BY e.created_at ASC
     """
 
@@ -128,7 +140,7 @@ def export_ledger_csv(
         with get_conn() as conn:
             with conn.cursor() as cur:
                 set_db_actor(cur, admin.user_id)
-                cur.execute(sql, (from_date, to_date))
+                cur.execute(sql, (start_utc, end_utc))
                 for row in cur:
                     yield row
 

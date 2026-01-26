@@ -35,8 +35,12 @@ async def tmoney_cashout(req: Request):
     }
 
 
-@router.api_route("/cashout", methods=["GET","POST","PUT","PATCH","DELETE","OPTIONS","HEAD"])
-async def tmoney_cashout(req: Request):
+@router.api_route(
+    "/cashout",
+    methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
+    include_in_schema=False,
+)
+async def tmoney_cashout_any(req: Request):
     try:
         payload = await req.json()
     except Exception:

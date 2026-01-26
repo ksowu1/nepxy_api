@@ -3,12 +3,18 @@ import os
 import sys
 import uuid
 import hashlib
+from pathlib import Path
 
 import requests
 
 _session = requests.Session()
 
-from _webhook_signing import canonical_json_bytes, tmoney_sig_header
+try:
+    from _webhook_signing import canonical_json_bytes, tmoney_sig_header
+except ModuleNotFoundError:
+    scripts_dir = Path(__file__).resolve().parent
+    sys.path.insert(0, str(scripts_dir))
+    from _webhook_signing import canonical_json_bytes, tmoney_sig_header
 
 
 def die(message, code=1):

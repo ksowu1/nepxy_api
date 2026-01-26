@@ -27,7 +27,10 @@ DB_ERROR_HTTP_MAP: dict[str, tuple[int, str]] = {
 }
 
 # word-boundary match (avoids substring mistakes)
-_DB_ERROR_PATTERN = re.compile(r"\b(" + "|".join(map(re.escape, DB_ERROR_HTTP_MAP.keys())) + r")\b")
+_DB_ERROR_PATTERN = re.compile(
+    r"\b(" + "|".join(map(re.escape, DB_ERROR_HTTP_MAP.keys())) + r")\b",
+    flags=re.IGNORECASE,
+)
 
 
 def _extract_code_from_text(text: str) -> str | None:
@@ -42,23 +45,25 @@ def _extract_code_from_text(text: str) -> str | None:
         # 1) If any known business code appears anywhere in the tail, prefer that.
         m = _DB_ERROR_PATTERN.search(tail)
         if m:
-            return m.group(1)
+            return m.group(1).upper()
 
         # 2) Otherwise fall back to the first token (older style)
         first = tail.split()[0].strip(":").strip()
         if "(" in first:
             first = first.split("(", 1)[0]
-        return first
+        return first.upper()
 
 
     # Fallback: any known code in text
     m = _DB_ERROR_PATTERN.search(text)
     if m:
-        return m.group(1)
+        return m.group(1).upper()
 
     lower = text.lower()
     if "no cashout limit configured" in lower:
         return "NO_CASHOUT_LIMIT_CONFIGURED"
+    if "insufficient funds" in lower:
+        return "INSUFFICIENT_FUNDS"
 
     return None
 

@@ -5,6 +5,7 @@
 from fastapi import APIRouter, Depends
 from uuid import UUID
 from typing import Optional
+from datetime import timezone
 
 from deps.auth import get_current_user, CurrentUser
 from db import get_conn
@@ -88,7 +89,11 @@ def wallet_transactions(
     next_cursor = None
     if items:
         last = items[-1]
-        next_cursor = f"{last.created_at.isoformat()}|{last.entry_id}"
+        created_at = last.created_at
+        if getattr(created_at, "tzinfo", None) is None:
+            created_at = created_at.replace(tzinfo=timezone.utc)
+        created_at = created_at.astimezone(timezone.utc)
+        next_cursor = f"{created_at.strftime('%Y-%m-%dT%H:%M:%S.%fZ')}|{last.entry_id}"
 
     return WalletTxnPage(wallet_id=wallet_id, items=items, next_cursor=next_cursor)
 
@@ -125,6 +130,10 @@ def wallet_activity(
     next_cursor = None
     if items:
         last = items[-1]
-        next_cursor = f"{last.created_at.isoformat()}|{last.transaction_id}"
+        created_at = last.created_at
+        if getattr(created_at, "tzinfo", None) is None:
+            created_at = created_at.replace(tzinfo=timezone.utc)
+        created_at = created_at.astimezone(timezone.utc)
+        next_cursor = f"{created_at.strftime('%Y-%m-%dT%H:%M:%S.%fZ')}|{last.transaction_id}"
 
     return WalletActivityPage(wallet_id=wallet_id, items=items, next_cursor=next_cursor)
