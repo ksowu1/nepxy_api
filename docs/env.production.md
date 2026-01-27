@@ -76,6 +76,7 @@ Fly apps used in workflows:
 | --- | --- | --- | --- | --- | --- |
 | MM_MODE | yes | `real` | `sandbox` | Provider mode. | `settings.py:MM_MODE`, `app/providers/mobile_money/config.py:mm_mode` |
 | MM_ENABLED_PROVIDERS | yes | `TMONEY,FLOOZ,MTN_MOMO,THUNES` | (none) | Provider allowlist. | `app/providers/mobile_money/config.py:enabled_providers` |
+| THUNES_ENABLED | no | `true` | `false` | Toggle Thunes validation + runtime usage. | `settings.py:THUNES_ENABLED` |
 | MM_STRICT_STARTUP_VALIDATION | no | `true` | `false` | Enforce strict startup validation. | `app/providers/mobile_money/validate.py` |
 | MM_HTTP_TIMEOUT_S | no | `20.0` | `20.0` | Provider HTTP timeout. | `settings.py:MM_HTTP_TIMEOUT_S` |
 | MOMO_HTTP_TIMEOUT_S | no | `20.0` | `20.0` | MoMo HTTP timeout. | `settings.py:MOMO_HTTP_TIMEOUT_S` |
@@ -88,7 +89,7 @@ Fly apps used in workflows:
 | FLOOZ_WEBHOOK_SECRET | yes (if FLOOZ enabled) | `flooz-secret` | (none) | FLOOZ webhook signature. | `routes/webhooks.py:_get_secret` |
 | MOMO_WEBHOOK_SECRET | yes (if MTN_MOMO enabled) | `momo-secret` | (none) | MoMo webhook signature. | `routes/webhooks.py:_get_secret` |
 | THUNES_WEBHOOK_SECRET | yes (if THUNES enabled) | `thunes-secret` | (none) | Thunes webhook signature. | `routes/webhooks.py:_get_secret` |
-| THUNES_ALLOW_UNSIGNED_WEBHOOKS | no (prod should be false) | `false` | `true` | Allow unsigned Thunes webhooks (sandbox only). | `routes/webhooks.py` |
+| THUNES_ALLOW_UNSIGNED_WEBHOOKS | no (ignored in prod) | `false` | `true` | Allow unsigned Thunes webhooks (sandbox only). | `routes/webhooks.py` |
 
 ## Thunes (Placeholders + Current)
 
@@ -101,6 +102,16 @@ Fly apps used in workflows:
 | THUNES_REAL_API_KEY | yes (prod, if THUNES enabled) | `thunes-real-key` | (none) | Thunes v2 API key. | `settings.py:THUNES_REAL_API_KEY` |
 | THUNES_REAL_API_SECRET | yes (prod, if THUNES enabled) | `thunes-real-secret` | (none) | Thunes v2 API secret. | `settings.py:THUNES_REAL_API_SECRET` |
 | THUNES_PAYER_ID_GH | yes (if THUNES enabled) | `payer-gh` | (none) | Payer id for GH. | `settings.py:THUNES_PAYER_ID_GH` |
+
+Enable Thunes later:
+- Set `THUNES_ENABLED=true`.
+- Keep `MM_ENABLED_PROVIDERS` including `THUNES`.
+- Add the THUNES_* API endpoint/key/secret and `THUNES_PAYER_ID_GH`.
+
+Discover Thunes payer_id for Ghana:
+- Use the Thunes Discovery API to list payers for Ghana and copy the `id` of the payer you want.
+- Example (placeholder; use your Thunes base URL and credentials):
+  `GET {THUNES_*_API_ENDPOINT}/v2/money-transfer/payers` then filter for country `GH` in the response.
 
 ## Observability
 

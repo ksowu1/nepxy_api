@@ -22,7 +22,7 @@ from app.payouts.repository import (
     get_payout_by_any_ref,
 )
 from app.providers.mobile_money.thunes import ThunesProvider
-from app.providers.mobile_money.config import enabled_providers
+from app.providers.mobile_money.config import provider_enabled
 from settings import settings
 
 # IMPORTANT:
@@ -109,10 +109,7 @@ def _canonical_provider(provider: str | None) -> str:
 
 
 def _provider_enabled(provider: str) -> bool:
-    enabled = {_canonical_provider(p) for p in enabled_providers()}
-    if not enabled:
-        return False
-    return _canonical_provider(provider) in enabled
+    return bool(provider_enabled(_canonical_provider(provider)))
 
 
 def _payload_summary(
@@ -323,14 +320,20 @@ async def _handle_mobile_money_webhook(req: Request, *, provider: str):
     if request_id:
         req.state.request_id = request_id
 
-    def _log_summary(signature_valid: bool, reason: str | None = None, payout_id: str | None = None) -> None:
+    def _log_summary(
+        signature_valid: bool,
+        reason: str | None = None,
+        payout_id: str | None = None,
+        transaction_id: str | None = None,
+    ) -> None:
         logger.info(
-            "webhook_received request_id=%s provider=%s signature_valid=%s provider_ref=%s external_ref=%s payout_id=%s status_raw=%s reason=%s",
+            "webhook_received request_id=%s provider=%s signature_valid=%s provider_ref=%s external_ref=%s transaction_id=%s payout_id=%s status_raw=%s reason=%s",
             request_id,
             provider,
             signature_valid,
             redact_text(provider_ref or ""),
             redact_text(external_ref or ""),
+            redact_text(transaction_id or ""),
             payout_id,
             redact_text(status_raw or ""),
             reason,
@@ -344,9 +347,9 @@ async def _handle_mobile_money_webhook(req: Request, *, provider: str):
                 provider=provider,
                 req=req,
                 headers=headers_dict,
-                payload_for_storage=payload_original,
-                payload_obj=payload_obj,
-                body_raw_str=body_raw_str,
+                payload_for_storage={},
+                payload_obj=None,
+                body_raw_str="",
                 sig_header=sig_header,
                 signature_valid=False,
                 signature_error="PROVIDER_DISABLED",
@@ -358,20 +361,15 @@ async def _handle_mobile_money_webhook(req: Request, *, provider: str):
                 ignore_reason="PROVIDER_DISABLED",
             )
             conn.commit()
-        return {
-            "ok": True,
-            "provider": provider,
-            "provider_ref": provider_ref,
-            "external_ref": external_ref,
-            "status": status_raw,
-            "ignored": True,
-            "reason": "PROVIDER_DISABLED",
-        }
+        raise HTTPException(status_code=503, detail={"error": "PROVIDER_DISABLED", "provider": provider})
 
     secret = _get_secret(provider)
-    # TODO: Thunes sandbox often lacks signatures; allow unsigned only when explicitly enabled.
+    # TODO: Thunes sandbox often lacks signatures; allow unsigned only when explicitly enabled (non-prod).
+    env = (settings.ENV or "dev").strip().lower()
     allow_unsigned = (
         provider.upper() == "THUNES"
+        and bool(settings.THUNES_ENABLED)
+        and env in {"dev", "staging"}
         and bool(settings.THUNES_ALLOW_UNSIGNED_WEBHOOKS)
         and (not secret or not sig_header)
     )
@@ -548,7 +546,7 @@ async def _handle_mobile_money_webhook(req: Request, *, provider: str):
             ignored = True
             ignore_reason = "PAYOUT_NOT_FOUND"
 
-            _log_summary(True, ignore_reason, payout_id=None)
+            _log_summary(True, ignore_reason, payout_id=None, transaction_id=None)
             _log_both_tables(
                 conn,
                 provider=provider,
@@ -633,7 +631,7 @@ async def _handle_mobile_money_webhook(req: Request, *, provider: str):
 
         conn.commit()
 
-    _log_summary(True, unsigned_reason, payout_id=str(tx_id) if tx_id else None)
+    _log_summary(True, unsigned_reason, payout_id=str(tx_id) if tx_id else None, transaction_id=str(tx_id) if tx_id else None)
     resp = {
         "ok": True,
         "provider": provider,

@@ -22,7 +22,7 @@ primary_region = 'ord'
     interval = '15s'
     timeout = '2s'
     method = 'GET'
-    path = '/health'
+    path = '/readyz'
     protocol = 'http'
     grace_period = '10s'
   [[http_service.checks]]

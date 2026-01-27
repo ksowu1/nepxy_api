@@ -151,3 +151,85 @@ def test_limits_reset_after_window_moves(client, monkeypatch):
         headers=_auth_headers(token, idem=f"idem-{uuid.uuid4()}"),
     )
     assert r.status_code == 200, r.text
+
+
+def test_cash_out_window_limit_enforced(client, monkeypatch):
+    monkeypatch.setattr(settings, "MAX_CASHOUT_COUNT_PER_DAY", 0)
+    monkeypatch.setattr(settings, "MAX_CASHOUT_PER_DAY_CENTS", 0)
+    monkeypatch.setattr(settings, "MAX_DISTINCT_RECEIVERS_PER_DAY", 0)
+    monkeypatch.setattr(settings, "MAX_CASHOUT_COUNT_PER_WINDOW", 1)
+    monkeypatch.setattr(settings, "CASHOUT_WINDOW_MINUTES", 60)
+
+    token, wallet_id = _register_and_login(client)
+    _cash_in(client, token, wallet_id, 1000)
+
+    _cash_out(client, token, wallet_id, "+22890000111")
+
+    payload = {
+        "wallet_id": wallet_id,
+        "amount_cents": 100,
+        "country": "BJ",
+        "provider_ref": f"vel-ref-{uuid.uuid4()}",
+        "provider": "TMONEY",
+        "phone_e164": "+22890000122",
+    }
+    r = client.post(
+        "/v1/cash-out/mobile-money",
+        json=payload,
+        headers=_auth_headers(token, idem=f"idem-{uuid.uuid4()}"),
+    )
+    assert r.status_code == 429, r.text
+    assert r.json().get("detail") == "CASHOUT_VELOCITY_WINDOW_EXCEEDED"
+
+
+def test_cash_out_monthly_limit_enforced(client, monkeypatch):
+    monkeypatch.setattr(settings, "MAX_CASHOUT_COUNT_PER_DAY", 0)
+    monkeypatch.setattr(settings, "MAX_CASHOUT_PER_DAY_CENTS", 0)
+    monkeypatch.setattr(settings, "MAX_DISTINCT_RECEIVERS_PER_DAY", 0)
+    monkeypatch.setattr(settings, "MAX_CASHOUT_PER_MONTH_CENTS", 150)
+
+    token, wallet_id = _register_and_login(client)
+    _cash_in(client, token, wallet_id, 1000)
+
+    _cash_out(client, token, wallet_id, "+22890000211")
+
+    payload = {
+        "wallet_id": wallet_id,
+        "amount_cents": 100,
+        "country": "BJ",
+        "provider_ref": f"vel-ref-{uuid.uuid4()}",
+        "provider": "TMONEY",
+        "phone_e164": "+22890000222",
+    }
+    r = client.post(
+        "/v1/cash-out/mobile-money",
+        json=payload,
+        headers=_auth_headers(token, idem=f"idem-{uuid.uuid4()}"),
+    )
+    assert r.status_code == 429, r.text
+    assert r.json().get("detail") == "VELOCITY_LIMIT_EXCEEDED"
+
+
+def test_cash_in_monthly_limit_enforced(client, monkeypatch):
+    monkeypatch.setattr(settings, "MAX_CASHIN_PER_DAY_CENTS", 0)
+    monkeypatch.setattr(settings, "MAX_CASHIN_PER_MONTH_CENTS", 150)
+
+    token, wallet_id = _register_and_login(client)
+
+    _cash_in(client, token, wallet_id, 100)
+
+    payload = {
+        "wallet_id": wallet_id,
+        "amount_cents": 100,
+        "country": "TG",
+        "provider_ref": f"vel-cashin-{uuid.uuid4()}",
+        "provider": "TMONEY",
+        "phone_e164": "+22890009911",
+    }
+    r = client.post(
+        "/v1/cash-in/mobile-money",
+        json=payload,
+        headers=_auth_headers(token, idem=f"idem-{uuid.uuid4()}"),
+    )
+    assert r.status_code == 429, r.text
+    assert r.json().get("detail") == "VELOCITY_LIMIT_EXCEEDED"

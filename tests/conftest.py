@@ -19,6 +19,7 @@ from fastapi.testclient import TestClient
 
 from main import app
 from db import get_conn
+from settings import settings
 
 # Optional: if you want to run the worker manually via python tests/conftest.py
 from app.workers.payout_worker import run_forever
@@ -53,6 +54,14 @@ def _set_webhook_secrets(monkeypatch):
     monkeypatch.setenv("TMONEY_WEBHOOK_SECRET", os.getenv("TMONEY_WEBHOOK_SECRET", "dev_secret_tmoney"))
     monkeypatch.setenv("FLOOZ_WEBHOOK_SECRET", os.getenv("FLOOZ_WEBHOOK_SECRET", "dev_secret_flooz"))
     monkeypatch.setenv("MOMO_WEBHOOK_SECRET", os.getenv("MOMO_WEBHOOK_SECRET", "dev_secret_momo"))
+
+
+@pytest.fixture(autouse=True)
+def _enable_provider_flags(monkeypatch):
+    monkeypatch.setattr(settings, "TMONEY_ENABLED", True, raising=False)
+    monkeypatch.setattr(settings, "FLOOZ_ENABLED", True, raising=False)
+    monkeypatch.setattr(settings, "MOMO_ENABLED", True, raising=False)
+    monkeypatch.setattr(settings, "THUNES_ENABLED", True, raising=False)
 
 
 # ---------------------------
@@ -420,6 +429,86 @@ def _ensure_audit_log_table():
                 );
                 """
             )
+        conn.commit()
+    yield
+
+
+@pytest.fixture(autouse=True)
+def _ensure_user_limit_overrides_table():
+    from db import get_conn
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("CREATE SCHEMA IF NOT EXISTS app;")
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS app.user_limit_overrides (
+                  user_id uuid PRIMARY KEY,
+                  max_cashout_per_day_cents bigint,
+                  max_cashout_per_month_cents bigint,
+                  max_cashout_count_per_day integer,
+                  max_cashout_count_per_month integer,
+                  max_cashin_per_day_cents bigint,
+                  max_cashin_per_month_cents bigint,
+                  max_cashout_count_per_window integer,
+                  cashout_window_minutes integer,
+                  max_distinct_receivers_per_day integer,
+                  updated_at timestamptz NOT NULL DEFAULT now()
+                );
+                """
+            )
+        conn.commit()
+    yield
+
+
+@pytest.fixture(autouse=True)
+def _ensure_risk_declines_table():
+    from db import get_conn
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("CREATE SCHEMA IF NOT EXISTS app;")
+            cur.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto;")
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS app.risk_declines (
+                  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+                  user_id uuid NOT NULL,
+                  reason text NOT NULL,
+                  created_at timestamptz NOT NULL DEFAULT now()
+                );
+                """
+            )
+        conn.commit()
+    yield
+
+
+@pytest.fixture(autouse=True)
+def _clear_risk_declines():
+    from db import get_conn
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("CREATE SCHEMA IF NOT EXISTS app;")
+            cur.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto;")
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS app.risk_declines (
+                  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+                  user_id uuid NOT NULL,
+                  reason text NOT NULL,
+                  created_at timestamptz NOT NULL DEFAULT now()
+                );
+                """
+            )
+            cur.execute("TRUNCATE app.risk_declines;")
+        conn.commit()
+    yield
+
+
+@pytest.fixture(autouse=True)
+def _clear_user_limit_overrides():
+    from db import get_conn
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("TRUNCATE app.user_limit_overrides;")
         conn.commit()
     yield
 

@@ -23,6 +23,10 @@ def _env(name: str) -> str:
     return (os.getenv(name) or "").strip()
 
 
+def _bool_env(name: str) -> bool:
+    return _env(name).lower() in {"1", "true", "yes", "y", "on"}
+
+
 def _require(missing: list[str], *names: str) -> None:
     for n in names:
         if not _env(n):
@@ -79,14 +83,20 @@ def validate_mobile_money_startup() -> None:
 
     for p in enabled:
         if p == "TMONEY":
+            if not _bool_env("TMONEY_ENABLED"):
+                continue
             prefix = "TMONEY_REAL_" if mode == "real" else "TMONEY_SANDBOX_"
             _require(missing, prefix + "API_KEY", prefix + "CASHOUT_URL")
 
         elif p == "FLOOZ":
+            if not _bool_env("FLOOZ_ENABLED"):
+                continue
             prefix = "FLOOZ_REAL_" if mode == "real" else "FLOOZ_SANDBOX_"
             _require(missing, prefix + "API_KEY", prefix + "CASHOUT_URL")
 
         elif p in {"MTN_MOMO", "MOMO"}:
+            if not _bool_env("MOMO_ENABLED"):
+                continue
             prefix = "MOMO_REAL_" if mode == "real" else "MOMO_SANDBOX_"
             _require(
                 missing,
@@ -97,6 +107,8 @@ def validate_mobile_money_startup() -> None:
             )
 
         elif p == "THUNES":
+            if not _bool_env("THUNES_ENABLED"):
+                continue
             prefix = "THUNES_REAL_" if mode == "real" else "THUNES_SANDBOX_"
             # For Thunes v2 you need endpoint + key + secret
             _require(missing, prefix + "API_ENDPOINT", prefix + "API_KEY", prefix + "API_SECRET")

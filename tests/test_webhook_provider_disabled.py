@@ -20,13 +20,13 @@ class _DummyConn:
 
 def test_webhook_disabled_provider_ignored(monkeypatch):
     monkeypatch.setattr(settings, "MM_ENABLED_PROVIDERS", "THUNES")
+    monkeypatch.setattr(settings, "TMONEY_ENABLED", False, raising=False)
     monkeypatch.setattr(webhooks, "_log_both_tables", lambda *args, **kwargs: None)
     monkeypatch.setattr(webhooks, "get_conn", lambda: _DummyConn())
     app = create_app()
     client = TestClient(app, raise_server_exceptions=False)
 
     r = client.post("/v1/webhooks/tmoney", json={"external_ref": "ext-1", "status": "SUCCESS"})
-    assert r.status_code == 200
+    assert r.status_code == 503
     body = r.json()
-    assert body.get("ignored") is True
-    assert body.get("reason") == "PROVIDER_DISABLED"
+    assert body.get("detail", {}).get("error") == "PROVIDER_DISABLED"

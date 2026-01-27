@@ -32,6 +32,10 @@ from routes.admin_exports import router as admin_exports_router
 from routes.health import router as health_router
 from routes.metrics import router as metrics_router
 from routes.catalog import router as catalog_router
+from routes.funding import router as funding_router
+from routes.admin_limits import router as admin_limits_router
+from routes.admin_provider_readiness import router as admin_provider_readiness_router
+from routes.admin_risk import router as admin_risk_router
 
 from app.providers.mobile_money.validate import validate_mobile_money_startup
 from app.providers.mobile_money.config import mm_mode, enabled_providers, is_strict_startup_validation
@@ -184,9 +188,13 @@ def create_app() -> FastAPI:
     app.include_router(admin_support_router)
     app.include_router(admin_reconcile_router)
     app.include_router(admin_exports_router)
+    app.include_router(admin_limits_router)
+    app.include_router(admin_provider_readiness_router)
+    app.include_router(admin_risk_router)
     app.include_router(health_router)
     app.include_router(metrics_router)
     app.include_router(catalog_router)
+    app.include_router(funding_router)
 
     # dev/staging helpers
     env = _runtime_env()

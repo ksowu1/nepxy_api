@@ -289,6 +289,13 @@ def cash_in_mobile_money(
                 status_code=200,
             )
 
+        logger.info(
+            "cash_in_created provider=%s transaction_id=%s provider_ref=%s external_ref=%s",
+            body.provider.value,
+            str(txn_id),
+            provider_ref,
+            "",
+        )
         return TxnResponse(transaction_id=txn_id)
 
     except HTTPException:
@@ -416,7 +423,18 @@ def cash_out_mobile_money(
 
     _ensure_provider_adapter(provider_code)
 
-    validate_cash_out_corridor(country, provider_code)
+    try:
+        validate_cash_out_corridor(country, provider_code)
+    except HTTPException as exc:
+        if exc.detail == "UNSUPPORTED_CORRIDOR":
+            try:
+                with get_conn() as conn:
+                    from services.risk import log_decline
+                    log_decline(conn, user_id=str(user.user_id), reason="CORRIDOR_BLOCKED")
+                    conn.commit()
+            except Exception:
+                pass
+        raise
 
     try:
         with get_conn() as conn:
@@ -545,6 +563,13 @@ def cash_out_mobile_money(
                 status_code=200,
             )
 
+        logger.info(
+            "cash_out_created provider=%s transaction_id=%s provider_ref=%s external_ref=%s",
+            provider_code,
+            str(txn_id),
+            provider_ref,
+            external_ref,
+        )
         return CashOutResponse(**resp)
 
     except HTTPException:

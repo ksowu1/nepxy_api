@@ -33,7 +33,8 @@ fly secrets set --app nepxy-prod ^
   DATABASE_URL="postgresql://..." ^
   JWT_SECRET="..." ^
   MM_MODE="real" ^
-  MM_ENABLED_PROVIDERS="TMONEY,FLOOZ,MTN_MOMO,THUNES"
+  MM_ENABLED_PROVIDERS="TMONEY,FLOOZ,MTN_MOMO,THUNES" ^
+  THUNES_ENABLED="false"
 ```
 
 Core:
@@ -62,8 +63,8 @@ MTN MOMO (if enabled):
 - `MOMO_REAL_BASE_URL`
 
 THUNES (if enabled):
+- `THUNES_ENABLED=true`
 - `THUNES_WEBHOOK_SECRET`
-- `THUNES_ALLOW_UNSIGNED_WEBHOOKS=false`
 - `THUNES_REAL_API_ENDPOINT`
 - `THUNES_REAL_API_KEY`
 - `THUNES_REAL_API_SECRET`
@@ -73,6 +74,18 @@ THUNES (if enabled):
 - `THUNES_PAYER_ID_GH`
 - `THUNES_PAYER_ID_TG`
 - `THUNES_PAYER_ID_BJ`
+
+Note: In production, unsigned Thunes webhooks are never accepted (THUNES_ALLOW_UNSIGNED_WEBHOOKS is ignored).
+
+Enable Thunes later:
+- Set `THUNES_ENABLED=true`.
+- Add the THUNES_* secrets above.
+- Restart the app (or redeploy) to pick up secrets.
+
+Discover Thunes payer_id for Ghana:
+- Call Thunes Discovery to list payers and select the Ghana payer `id`.
+- Example (placeholder; use your Thunes base URL and credentials):
+  `GET {THUNES_*_API_ENDPOINT}/v2/money-transfer/payers` then filter for country `GH`.
 
 Bootstrap/debug (unused in prod):
 - `BOOTSTRAP_ADMIN_SECRET` (should be unset in production)

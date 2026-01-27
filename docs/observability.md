@@ -31,3 +31,9 @@ Fly logs:
 ```bash
 flyctl logs --app nepxy-staging | rg "request_id=manual-req-1"
 ```
+
+## Scripted lookup
+Use the helper script to search Fly logs by request_id:
+```powershell
+.\scripts\find_request.ps1 -RequestId manual-req-1 -App nepxy-staging
+```

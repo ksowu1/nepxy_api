@@ -17,9 +17,36 @@ def is_strict_startup_validation() -> bool:
     return bool(settings.MM_STRICT_STARTUP_VALIDATION)
 
 
-def enabled_providers() -> set[str]:
+def _normalize_provider(value: str) -> str:
+    v = (value or "").strip().upper().replace("-", "_").replace(" ", "_")
+    if v == "MOMO":
+        return "MTN_MOMO"
+    return v
+
+
+def _raw_enabled_providers() -> set[str]:
     raw = settings.MM_ENABLED_PROVIDERS or ""
-    return {p.strip().upper().replace("-", "_").replace(" ", "_") for p in raw.split(",") if p.strip()}
+    return {_normalize_provider(p) for p in raw.split(",") if p.strip()}
+
+
+def provider_enabled(provider: str) -> bool:
+    normalized = _normalize_provider(provider)
+    providers = _raw_enabled_providers()
+    if normalized not in providers:
+        return False
+    if normalized == "TMONEY":
+        return bool(settings.TMONEY_ENABLED)
+    if normalized == "FLOOZ":
+        return bool(settings.FLOOZ_ENABLED)
+    if normalized == "MTN_MOMO":
+        return bool(settings.MOMO_ENABLED)
+    if normalized == "THUNES":
+        return bool(settings.THUNES_ENABLED)
+    return False
+
+
+def enabled_providers() -> set[str]:
+    return {p for p in _raw_enabled_providers() if provider_enabled(p)}
 
 
 @dataclass(frozen=True)

@@ -11,7 +11,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 function Require-Env([string]$name) {
-    if (-not $env:$name) {
+    if (-not ${env:$name}) {
         Write-Error "Missing required env var: $name"
         exit 2
     }
@@ -36,7 +36,7 @@ function Invoke-Health([string]$path) {
 }
 
 Invoke-Health "/health"
-Invoke-Health "/ready"
+Invoke-Health "/readyz"
 
 $loginBody = @{
     email = $env:SMOKE_EMAIL
