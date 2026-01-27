@@ -12,6 +12,7 @@ import uuid
 import logging
 
 from db import get_conn
+from services.observability import get_request_id
 from app.payouts.repository import (
     update_status,
     claim_pending_payouts,
@@ -19,6 +20,7 @@ from app.payouts.repository import (
 )
 from app.providers.base import ProviderResult
 from app.providers.mobile_money.factory import get_provider
+from app.providers.mobile_money.config import provider_enabled
 from services.metrics import increment_payout_attempt
 
 SUPPORTED_PROVIDERS = {"TMONEY", "FLOOZ", "MTN", "MTN_MOMO", "MOMO", "THUNES"}
@@ -113,7 +115,11 @@ def process_once(*, batch_size: int = 50, stale_seconds: int = DEFAULT_STALE_SEC
         pending = claim_pending_payouts(conn, batch_size=batch_size)
         stale_sent = claim_stale_sent_payouts(conn, batch_size=batch_size, stale_after_seconds=stale_seconds)
 
-        print(f"[worker] found_pending={len(pending)} found_stale_sent={len(stale_sent)}")
+        req_id = get_request_id()
+        if req_id:
+            print(f"[worker] request_id={req_id} found_pending={len(pending)} found_stale_sent={len(stale_sent)}")
+        else:
+            print(f"[worker] found_pending={len(pending)} found_stale_sent={len(stale_sent)}")
 
         # process each payout independently so one bad row doesn't kill the whole batch
         for p in pending:
@@ -233,6 +239,22 @@ def _handle_pending(conn, p: dict) -> None:
         )
         return
 
+    if not provider_enabled(provider_name):
+        update_status(
+            conn,
+            payout_id=payout_id,
+            from_status=current_status,
+            new_status="FAILED",
+            provider_ref=p.get("provider_ref"),
+            provider_response=p.get("provider_response"),
+            last_error="PROVIDER_DISABLED",
+            retryable=False,
+            attempt_count=attempt_count,
+            next_retry_at=None,
+            touch_last_attempt_at=False,
+        )
+        return
+
     provider = get_provider(provider_name)
     if provider is None:
         update_status(
@@ -303,10 +325,13 @@ def _handle_pending(conn, p: dict) -> None:
         )
         increment_payout_attempt(provider_name, res.status)
         logger.info(
-            "momo payout create payout_id=%s status=%s provider_ref=%s error=%s",
+            "momo payout create payout_id=%s transaction_id=%s provider=%s provider_ref=%s external_ref=%s status=%s error=%s",
             payout_id,
-            res.status,
+            str(p.get("transaction_id") or ""),
+            provider_name,
             res.provider_ref,
+            p.get("external_ref") or "",
+            res.status,
             res.error,
         )
 
@@ -349,10 +374,13 @@ def _handle_pending(conn, p: dict) -> None:
     increment_payout_attempt(provider_name, res.status)
     if provider_name == "MOMO":
         logger.info(
-            "momo payout send payout_id=%s status=%s provider_ref=%s error=%s",
+            "momo payout send payout_id=%s transaction_id=%s provider=%s provider_ref=%s external_ref=%s status=%s error=%s",
             payout_id,
-            res.status,
+            str(p.get("transaction_id") or ""),
+            provider_name,
             res.provider_ref,
+            p.get("external_ref") or "",
+            res.status,
             res.error,
         )
 
@@ -468,6 +496,22 @@ def _handle_sent(conn, p: dict) -> None:
         )
         return
 
+    if not provider_enabled(provider_name):
+        update_status(
+            conn,
+            payout_id=payout_id,
+            from_status=current_status,
+            new_status="FAILED",
+            provider_ref=p.get("provider_ref"),
+            provider_response=p.get("provider_response"),
+            last_error="PROVIDER_DISABLED",
+            retryable=False,
+            attempt_count=attempt_count,
+            next_retry_at=None,
+            touch_last_attempt_at=False,
+        )
+        return
+
     provider = get_provider(provider_name)
     if provider is None:
         update_status(
@@ -493,9 +537,12 @@ def _handle_sent(conn, p: dict) -> None:
     res = _normalize_result(provider.get_cashout_status(p))
     if provider_name == "MOMO":
         logger.info(
-            "momo payout reconcile payout_id=%s provider_ref=%s status=%s error=%s",
+            "momo payout reconcile payout_id=%s transaction_id=%s provider=%s provider_ref=%s external_ref=%s status=%s error=%s",
             payout_id,
+            str(p.get("transaction_id") or ""),
+            provider_name,
             p.get("provider_ref"),
+            p.get("external_ref") or "",
             res.status,
             res.error,
         )

@@ -7,14 +7,55 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    needs: [ ]
+    environment: staging
+    env:
+      DEPLOY_ENV: staging
     steps:
       - uses: actions/checkout@v4
 
       - uses: superfly/flyctl-actions/setup-flyctl@v1
+
+      - name: Predeploy checks (prod only)
+        if: ${{ env.DEPLOY_ENV == 'prod' || env.DEPLOY_ENV == 'production' }}
+        run: |
+          python scripts/predeploy_check.py
 
       - name: Deploy to Fly
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
           fly deploy --app nepxy-staging --remote-only
+
+      - name: Capture deploy metadata
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          fly releases list -a nepxy-staging --json > releases.json
+          python - <<'PY'
+          import json
+          import os
+          from datetime import datetime, timezone
+
+          with open("releases.json", "r", encoding="utf-8") as fh:
+              data = json.load(fh)
+
+          image_ref = ""
+          if isinstance(data, list) and data:
+              latest = data[0]
+              image_ref = latest.get("Image") or latest.get("image") or ""
+
+          meta = {
+              "app": "nepxy-staging",
+              "git_sha": os.getenv("GITHUB_SHA", ""),
+              "image_ref": image_ref,
+              "timestamp": datetime.now(timezone.utc).isoformat(),
+          }
+          with open("deploy_meta.json", "w", encoding="utf-8") as fh:
+              json.dump(meta, fh)
+          PY
+
+      - name: Upload staging deploy metadata
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-deploy-meta
+          path: deploy_meta.json

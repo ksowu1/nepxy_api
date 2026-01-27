@@ -32,6 +32,10 @@ from routes.admin_exports import router as admin_exports_router
 from routes.health import router as health_router
 from routes.metrics import router as metrics_router
 from routes.catalog import router as catalog_router
+from routes.funding import router as funding_router
+from routes.admin_limits import router as admin_limits_router
+from routes.admin_provider_readiness import router as admin_provider_readiness_router
+from routes.admin_risk import router as admin_risk_router
 
 from app.providers.mobile_money.validate import validate_mobile_money_startup
 from app.providers.mobile_money.config import mm_mode, enabled_providers, is_strict_startup_validation
@@ -41,9 +45,12 @@ from middleware import (
     RateLimitMiddleware,
     SecurityHeadersMiddleware,
     StagingGateMiddleware,
+    MaintenanceModeMiddleware,
 )
 
 logger = logging.getLogger("nexapay")
+DEFAULT_HOST = "0.0.0.0"
+DEFAULT_PORT = 8001
 
 
 def _configure_logging_once() -> None:
@@ -70,17 +77,18 @@ def _cors_origins() -> List[str]:
     """
     Expo web + local dev can run on different ports.
     Keep this permissive in dev, tight in prod.
-    Optionally override via CORS_ALLOW_ORIGINS env (comma-separated).
+    Optionally override via CORS_ORIGINS env (comma-separated).
     """
-    env_origins = _parse_csv_env("CORS_ALLOW_ORIGINS", "") or _parse_csv_env(
+    env = (os.getenv("ENV") or os.getenv("ENVIRONMENT") or settings.ENV or "dev").lower()
+    if env in {"prod", "production"}:
+        prod_origins = _parse_csv_env("CORS_ORIGINS", "")
+        return prod_origins
+
+    env_origins = _parse_csv_env("CORS_ORIGINS", "") or _parse_csv_env(
         settings.CORS_ALLOW_ORIGINS, ""
     )
     if env_origins:
         return env_origins
-
-    env = (settings.ENV or "dev").lower()
-    if env == "prod":
-        return []
 
     # Common Expo + local dev origins
     return [
@@ -96,6 +104,23 @@ def _cors_origins() -> List[str]:
     ]
 
 
+def _runtime_env() -> str:
+    env = (os.getenv("ENV") or os.getenv("ENVIRONMENT") or settings.ENV or "dev").strip().lower()
+    return env or "dev"
+
+
+def _is_prod_env(env: str | None = None) -> bool:
+    value = (env or _runtime_env()).strip().lower()
+    return value in {"prod", "production"}
+
+
+def _resolve_port() -> int:
+    raw = (os.getenv("PORT") or "").strip()
+    if raw.isdigit():
+        return int(raw)
+    return DEFAULT_PORT
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _configure_logging_once()
@@ -106,6 +131,12 @@ async def lifespan(app: FastAPI):
 
     validate_env_settings()
 
+    logger.info(
+        "BOOT NepXy API | host=%s | port=%s | env=%s",
+        DEFAULT_HOST,
+        _resolve_port(),
+        settings.ENV,
+    )
     logger.info(
         "BOOT NepXy API | MM_MODE=%s | MM_STRICT_STARTUP_VALIDATION=%s | MM_ENABLED_PROVIDERS=%s",
         mode,
@@ -125,6 +156,7 @@ def create_app() -> FastAPI:
 
     app.add_middleware(StagingGateMiddleware)
     app.add_middleware(RateLimitMiddleware)
+    app.add_middleware(MaintenanceModeMiddleware)
     app.add_middleware(RequestContextMiddleware)
     app.add_middleware(SecurityHeadersMiddleware)
 
@@ -156,13 +188,20 @@ def create_app() -> FastAPI:
     app.include_router(admin_support_router)
     app.include_router(admin_reconcile_router)
     app.include_router(admin_exports_router)
+    app.include_router(admin_limits_router)
+    app.include_router(admin_provider_readiness_router)
+    app.include_router(admin_risk_router)
     app.include_router(health_router)
     app.include_router(metrics_router)
     app.include_router(catalog_router)
+    app.include_router(funding_router)
 
-    # dev-only helpers
-    app.include_router(debug_router)
-    app.include_router(mock_tmoney_router)
+    # dev/staging helpers
+    env = _runtime_env()
+    if env in {"dev", "staging"} and not _is_prod_env(env):
+        app.include_router(debug_router)
+    if env in {"dev", "staging"} and not _is_prod_env(env):
+        app.include_router(mock_tmoney_router)
 
     @app.exception_handler(Exception)
     async def unhandled_error_handler(request: Request, exc: Exception):

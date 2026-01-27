@@ -41,6 +41,7 @@ from services.db_errors import raise_http_from_db_error
 from services.idempotency import get_idempotency, store_idempotency, request_hash, idempotency_conflict
 from services.metrics import increment_idempotency_replay
 from services.velocity import check_cash_in_velocity, check_cash_out_velocity
+from rate_limit import rate_limit_enabled, rate_limit_money_per_min, rate_limit_or_429
 
 router = APIRouter(prefix="/v1", tags=["payments"])
 
@@ -61,6 +62,13 @@ def _canonical_provider_code(value: str | None) -> str:
     if normalized in ("MTN", "MTN_MOMO"):
         return "MOMO"
     return normalized
+
+
+def _provider_enabled_in_config(provider: str | None) -> bool:
+    enabled = {_canonical_provider_code(p) for p in enabled_providers()}
+    if not enabled:
+        return False
+    return _canonical_provider_code(provider) in enabled
 
 
 def _resolve_destination_country(body: CashOutRequest) -> tuple[str, bool]:
@@ -203,10 +211,16 @@ def payout_quote(body: PayoutQuoteRequest):
 @router.post("/cash-in/mobile-money", response_model=TxnResponse)
 def cash_in_mobile_money(
     body: CashInRequest,
+    req: Request,
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     user: CurrentUser = Depends(get_current_user),
 ):
     idem = require_idempotency(idempotency_key)
+    if rate_limit_enabled():
+        client_ip = req.client.host if req.client else "unknown"
+        limit = rate_limit_money_per_min()
+        rate_limit_or_429(key=f"money:ip:{client_ip}", limit=limit, window_seconds=60)
+        rate_limit_or_429(key=f"money:wallet:{body.wallet_id}", limit=limit, window_seconds=60)
     provider_ref = body.provider_ref or str(uuid.uuid4())
     route_key = "cash_in_mobile_money"
     req_hash = request_hash(body.model_dump())
@@ -275,6 +289,13 @@ def cash_in_mobile_money(
                 status_code=200,
             )
 
+        logger.info(
+            "cash_in_created provider=%s transaction_id=%s provider_ref=%s external_ref=%s",
+            body.provider.value,
+            str(txn_id),
+            provider_ref,
+            "",
+        )
         return TxnResponse(transaction_id=txn_id)
 
     except HTTPException:
@@ -354,6 +375,11 @@ def cash_out_mobile_money(
     user: CurrentUser = Depends(get_current_user),
 ):
     idem = require_idempotency(idempotency_key)
+    if rate_limit_enabled():
+        client_ip = req.client.host if req.client else "unknown"
+        limit = rate_limit_money_per_min()
+        rate_limit_or_429(key=f"money:ip:{client_ip}", limit=limit, window_seconds=60)
+        rate_limit_or_429(key=f"money:wallet:{body.wallet_id}", limit=limit, window_seconds=60)
     provider_ref = body.provider_ref or str(uuid.uuid4())
     route_key = "cash_out_mobile_money"
     req_hash = request_hash(body.model_dump())
@@ -390,12 +416,25 @@ def cash_out_mobile_money(
         destination if destination_requested else None,
         providers_for_method if destination_requested else None,
     )
+    if not _provider_enabled_in_config(provider_code):
+        raise HTTPException(status_code=400, detail=PROVIDER_DISABLED)
     if not is_provider_enabled_for_country(country, provider_code):
         raise HTTPException(status_code=400, detail=PROVIDER_DISABLED)
 
     _ensure_provider_adapter(provider_code)
 
-    validate_cash_out_corridor(country, provider_code)
+    try:
+        validate_cash_out_corridor(country, provider_code)
+    except HTTPException as exc:
+        if exc.detail == "UNSUPPORTED_CORRIDOR":
+            try:
+                with get_conn() as conn:
+                    from services.risk import log_decline
+                    log_decline(conn, user_id=str(user.user_id), reason="CORRIDOR_BLOCKED")
+                    conn.commit()
+            except Exception:
+                pass
+        raise
 
     try:
         with get_conn() as conn:
@@ -475,6 +514,7 @@ def cash_out_mobile_money(
                     """
                     INSERT INTO app.mobile_money_payouts (
                       transaction_id, provider, phone_e164, provider_ref,
+                      request_id,
                       status, amount_cents, currency,
                       last_error, attempt_count, last_attempt_at, next_retry_at, retryable, provider_response,
                       quote,
@@ -482,6 +522,7 @@ def cash_out_mobile_money(
                     )
                     VALUES (
                       %s::uuid, %s, %s, %s,
+                      %s,
                       'PENDING', %s, %s,
                       NULL, 0, NULL, NULL, TRUE, NULL,
                       %s::jsonb,
@@ -495,6 +536,7 @@ def cash_out_mobile_money(
                         provider_code,
                         body.phone_e164,
                         provider_ref,
+                        getattr(req.state, "request_id", None),
                         int(body.amount_cents),
                         "XOF",
                         Psycopg2Json(quote),
@@ -521,6 +563,13 @@ def cash_out_mobile_money(
                 status_code=200,
             )
 
+        logger.info(
+            "cash_out_created provider=%s transaction_id=%s provider_ref=%s external_ref=%s",
+            provider_code,
+            str(txn_id),
+            provider_ref,
+            external_ref,
+        )
         return CashOutResponse(**resp)
 
     except HTTPException:

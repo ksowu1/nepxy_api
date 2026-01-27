@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import os
 from typing import Literal
 from uuid import UUID
 
@@ -24,7 +25,7 @@ class Settings(BaseSettings):
     # -----------------------
     # Environment
     # -----------------------
-    ENV: Literal["dev", "staging", "prod"] = "dev"
+    ENV: Literal["dev", "staging", "prod", "test"] = "dev"
 
     # -----------------------
     # DB
@@ -56,6 +57,15 @@ class Settings(BaseSettings):
     MAX_CASHOUT_COUNT_PER_DAY: int = 0
     MAX_DISTINCT_RECEIVERS_PER_DAY: int = 0
     MAX_CASHIN_PER_DAY_CENTS: int = 0
+    MAX_CASHOUT_PER_MONTH_CENTS: int = 0
+    MAX_CASHOUT_COUNT_PER_MONTH: int = 0
+    MAX_CASHIN_PER_MONTH_CENTS: int = 0
+    MAX_CASHOUT_COUNT_PER_WINDOW: int = 0
+    CASHOUT_WINDOW_MINUTES: int = 0
+
+    # Corridor allowlist
+    CORRIDOR_ALLOWLIST: str = "US:GH,US:BJ"
+    ALLOWED_PAYOUT_CORRIDORS: str = "US->GH,US->BJ"
 
     # -----------------------
     # Mobile Money (Mode Switch)
@@ -63,6 +73,16 @@ class Settings(BaseSettings):
     MM_MODE: Literal["sandbox", "real"] = "sandbox"
     MM_STRICT_STARTUP_VALIDATION: bool = False
     MM_ENABLED_PROVIDERS: str = "TMONEY,FLOOZ,MTN_MOMO,THUNES"
+    TMONEY_ENABLED: bool = False
+    FLOOZ_ENABLED: bool = False
+    MOMO_ENABLED: bool = False
+
+    # -----------------------
+    # Funding rails (placeholders)
+    # -----------------------
+    FUNDING_ACH_ENABLED: bool = False
+    FUNDING_CARD_ENABLED: bool = False
+    FUNDING_WIRE_ENABLED: bool = False
 
     # HTTP timeouts
     MM_HTTP_TIMEOUT_S: float = 20.0
@@ -137,6 +157,7 @@ class Settings(BaseSettings):
     # -----------------------
     # THUNES (sandbox/real)
     # -----------------------
+    THUNES_ENABLED: bool = False
     THUNES_SANDBOX_BASE_URL: str = ""
     THUNES_REAL_BASE_URL: str = ""
 
@@ -168,6 +189,7 @@ class Settings(BaseSettings):
 
     THUNES_PAYER_ID_TG: str = ""
     THUNES_PAYER_ID_BJ: str = ""
+    THUNES_PAYER_ID_GH: str = ""
 
     THUNES_TX_TYPE: str = "C2C"
     THUNES_QUOTE_MODE: str = "DESTINATION_AMOUNT"
@@ -225,6 +247,22 @@ def _enabled_providers_from_settings() -> set[str]:
     return {_normalize_provider(p) for p in items}
 
 
+def _provider_enabled_from_settings(provider: str) -> bool:
+    normalized = _normalize_provider(provider)
+    providers = _enabled_providers_from_settings()
+    if normalized not in providers:
+        return False
+    if normalized == "TMONEY":
+        return bool(settings.TMONEY_ENABLED)
+    if normalized == "FLOOZ":
+        return bool(settings.FLOOZ_ENABLED)
+    if normalized == "MTN_MOMO":
+        return bool(settings.MOMO_ENABLED)
+    if normalized == "THUNES":
+        return bool(settings.THUNES_ENABLED)
+    return False
+
+
 def _missing_if_empty(missing: list[str], name: str, value: str) -> None:
     if not (value or "").strip():
         missing.append(name)
@@ -235,30 +273,46 @@ def validate_env_settings() -> None:
 
     logger = logging.getLogger("nexapay")
     env = (settings.ENV or "dev").strip().lower()
+    _apply_provider_flag_defaults(env)
     providers = _enabled_providers_from_settings()
+    tmoney_enabled = "TMONEY" in providers and bool(settings.TMONEY_ENABLED)
+    flooz_enabled = "FLOOZ" in providers and bool(settings.FLOOZ_ENABLED)
+    momo_enabled = "MTN_MOMO" in providers and bool(settings.MOMO_ENABLED)
+    thunes_enabled = "THUNES" in providers and bool(settings.THUNES_ENABLED)
 
     missing: list[str] = []
+    required_all = ["DATABASE_URL"]
+    required_staging = ["STAGING_GATE_KEY", "BOOTSTRAP_ADMIN_SECRET"]
+    required_staging_prod = ["JWT_SECRET"]
 
-    # Always required in prod
-    if env == "prod":
-        _missing_if_empty(missing, "DATABASE_URL", settings.DATABASE_URL)
+    if env in {"staging", "prod"}:
+        for name in required_all:
+            _missing_if_empty(missing, name, getattr(settings, name, ""))
+
         if settings.JWT_SECRET == "dev-secret-change-me":
             missing.append("JWT_SECRET")
 
-        if "TMONEY" in providers:
+        if env == "staging":
+            for name in required_staging:
+                _missing_if_empty(missing, name, os.getenv(name, ""))
+
+        if tmoney_enabled:
             _missing_if_empty(missing, "TMONEY_WEBHOOK_SECRET", getattr(settings, "TMONEY_WEBHOOK_SECRET", ""))
-        if "FLOOZ" in providers:
+        if flooz_enabled:
             _missing_if_empty(missing, "FLOOZ_WEBHOOK_SECRET", getattr(settings, "FLOOZ_WEBHOOK_SECRET", ""))
-        if "MTN_MOMO" in providers:
+        if momo_enabled:
             _missing_if_empty(missing, "MOMO_WEBHOOK_SECRET", getattr(settings, "MOMO_WEBHOOK_SECRET", ""))
-        if "THUNES" in providers:
+        if thunes_enabled:
             _missing_if_empty(missing, "THUNES_WEBHOOK_SECRET", settings.THUNES_WEBHOOK_SECRET)
-            if settings.THUNES_ALLOW_UNSIGNED_WEBHOOKS:
-                missing.append("THUNES_ALLOW_UNSIGNED_WEBHOOKS")
+            _missing_if_empty(missing, "THUNES_PAYER_ID_GH", settings.THUNES_PAYER_ID_GH)
             if settings.MM_MODE == "real":
                 _missing_if_empty(missing, "THUNES_REAL_API_ENDPOINT", settings.THUNES_REAL_API_ENDPOINT)
                 _missing_if_empty(missing, "THUNES_REAL_API_KEY", settings.THUNES_REAL_API_KEY)
                 _missing_if_empty(missing, "THUNES_REAL_API_SECRET", settings.THUNES_REAL_API_SECRET)
+            else:
+                _missing_if_empty(missing, "THUNES_SANDBOX_API_ENDPOINT", settings.THUNES_SANDBOX_API_ENDPOINT)
+                _missing_if_empty(missing, "THUNES_SANDBOX_API_KEY", settings.THUNES_SANDBOX_API_KEY)
+                _missing_if_empty(missing, "THUNES_SANDBOX_API_SECRET", settings.THUNES_SANDBOX_API_SECRET)
 
         google_any = any(
             [
@@ -274,8 +328,8 @@ def validate_env_settings() -> None:
 
         if missing:
             raise RuntimeError(
-                "ENV validation failed for prod. Missing required env vars: "
-                + ", ".join(sorted(set(missing)))
+                "ENV validation failed for %s. Missing required env vars: %s"
+                % (env, ", ".join(sorted(set(missing))))
             )
         return
 
@@ -283,11 +337,25 @@ def validate_env_settings() -> None:
     if settings.JWT_SECRET == "dev-secret-change-me":
         logger.warning("ENV=%s using default JWT_SECRET (not for production).", env)
 
-    if "TMONEY" in providers and not getattr(settings, "TMONEY_WEBHOOK_SECRET", ""):
+    if tmoney_enabled and not getattr(settings, "TMONEY_WEBHOOK_SECRET", ""):
         logger.warning("ENV=%s missing TMONEY_WEBHOOK_SECRET", env)
-    if "FLOOZ" in providers and not getattr(settings, "FLOOZ_WEBHOOK_SECRET", ""):
+    if flooz_enabled and not getattr(settings, "FLOOZ_WEBHOOK_SECRET", ""):
         logger.warning("ENV=%s missing FLOOZ_WEBHOOK_SECRET", env)
-    if "MTN_MOMO" in providers and not getattr(settings, "MOMO_WEBHOOK_SECRET", ""):
+    if momo_enabled and not getattr(settings, "MOMO_WEBHOOK_SECRET", ""):
         logger.warning("ENV=%s missing MOMO_WEBHOOK_SECRET", env)
-    if "THUNES" in providers and not settings.THUNES_WEBHOOK_SECRET:
+    if thunes_enabled and not settings.THUNES_WEBHOOK_SECRET:
         logger.warning("ENV=%s missing THUNES_WEBHOOK_SECRET", env)
+    if thunes_enabled and not settings.THUNES_PAYER_ID_GH:
+        logger.warning("ENV=%s missing THUNES_PAYER_ID_GH", env)
+
+
+def _explicit_true_env(name: str) -> bool:
+    return (os.getenv(name, "") or "").strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _apply_provider_flag_defaults(env: str) -> None:
+    if env in {"prod", "production"}:
+        settings.TMONEY_ENABLED = _explicit_true_env("TMONEY_ENABLED")
+        settings.FLOOZ_ENABLED = _explicit_true_env("FLOOZ_ENABLED")
+        settings.MOMO_ENABLED = _explicit_true_env("MOMO_ENABLED")
+        settings.THUNES_ENABLED = _explicit_true_env("THUNES_ENABLED")

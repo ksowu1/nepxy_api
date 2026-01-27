@@ -57,6 +57,14 @@ def _serialize_payout(row: dict[str, Any]) -> dict[str, Any]:
         "updated_at": row["updated_at"].isoformat() if row.get("updated_at") else None,
     }
 
+def _provider_aliases(provider: str | None) -> list[str]:
+    if not provider:
+        return []
+    p = provider.strip().upper()
+    if p in {"MOMO", "MTN_MOMO"}:
+        return ["MOMO", "MTN_MOMO"]
+    return [p]
+
 
 @router.post("/payouts/{transaction_id}/confirmed")
 def admin_mark_payout_confirmed(transaction_id: str, admin: CurrentUser = Depends(require_admin)):
@@ -263,8 +271,23 @@ def admin_list_payout_webhook_events(
           received_at,
           COALESCE(payload_json, payload) AS payload_json
         FROM app.webhook_events
-        WHERE provider = %s
+        WHERE provider = ANY(%s::text[])
           AND (external_ref = %s OR provider_ref = %s)
+        ORDER BY received_at DESC
+        LIMIT %s
+    """
+    events_sql_no_provider = """
+        SELECT
+          id::text AS id,
+          provider,
+          external_ref,
+          provider_ref,
+          status_raw,
+          signature_valid,
+          received_at,
+          COALESCE(payload_json, payload) AS payload_json
+        FROM app.webhook_events
+        WHERE (external_ref = %s OR provider_ref = %s)
         ORDER BY received_at DESC
         LIMIT %s
     """
@@ -277,16 +300,29 @@ def admin_list_payout_webhook_events(
                 raise HTTPException(status_code=404, detail="Payout not found")
 
             payout_external_ref = payout.get("external_ref") or f"ext-{transaction_id}"
+            providers = _provider_aliases(payout.get("provider"))
+            if not providers:
+                providers = ["UNKNOWN"]
             cur.execute(
                 events_sql,
                 (
-                    payout["provider"],
+                    providers,
                     payout_external_ref,
                     payout.get("provider_ref"),
                     limit,
                 ),
             )
             rows = cur.fetchall() or []
+            if not rows:
+                cur.execute(
+                    events_sql_no_provider,
+                    (
+                        payout_external_ref,
+                        payout.get("provider_ref"),
+                        limit,
+                    ),
+                )
+                rows = cur.fetchall() or []
 
     events = []
     for row in rows:
@@ -305,3 +341,110 @@ def admin_list_payout_webhook_events(
         )
 
     return {"events": events, "count": len(events), "limit": limit}
+
+
+@router.get("/trace")
+def admin_trace_events(
+    transaction_id: str | None = Query(None),
+    external_ref: str | None = Query(None),
+    provider_ref: str | None = Query(None),
+    provider: str | None = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+    _admin=Depends(require_admin),
+):
+    tx_id = (transaction_id or "").strip()
+    ext_ref = (external_ref or "").strip()
+    prov_ref = (provider_ref or "").strip()
+    prov = (provider or "").strip().upper()
+
+    if not any([tx_id, ext_ref, prov_ref]):
+        return {"payouts": [], "webhook_events": [], "count": 0, "limit": limit}
+
+    where = []
+    params: list[Any] = []
+    if tx_id:
+        where.append("p.transaction_id::text = %s")
+        params.append(tx_id)
+    if prov_ref:
+        where.append("p.provider_ref = %s")
+        params.append(prov_ref)
+    if ext_ref:
+        where.append("tx.external_ref = %s")
+        params.append(ext_ref)
+    if prov:
+        where.append("upper(p.provider) = upper(%s)")
+        params.append(prov)
+
+    where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+
+    payouts_sql = f"""
+        SELECT
+          p.id::text AS payout_id,
+          p.transaction_id::text AS transaction_id,
+          p.status,
+          p.provider,
+          p.phone_e164,
+          p.provider_ref,
+          p.created_at,
+          tx.external_ref,
+          tx.amount_cents,
+          tx.currency
+        FROM app.mobile_money_payouts p
+        LEFT JOIN ledger.ledger_transactions tx ON tx.id = p.transaction_id
+        {where_sql}
+        ORDER BY p.created_at DESC
+        LIMIT %s
+    """
+    params_with_limit = params + [limit]
+
+    with get_conn() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(payouts_sql, params_with_limit)
+            payouts = cur.fetchall() or []
+
+            external_refs = {ext_ref} if ext_ref else set()
+            provider_refs = {prov_ref} if prov_ref else set()
+            providers = {prov} if prov else set()
+            for row in payouts:
+                if row.get("external_ref"):
+                    external_refs.add(row["external_ref"])
+                if row.get("provider_ref"):
+                    provider_refs.add(row["provider_ref"])
+                if row.get("provider"):
+                    providers.add(str(row["provider"]).upper())
+
+            webhook_events = []
+            if external_refs or provider_refs:
+                cur.execute(
+                    """
+                    SELECT
+                      id::text AS id,
+                      provider,
+                      external_ref,
+                      provider_ref,
+                      status_raw,
+                      signature_valid,
+                      received_at,
+                      COALESCE(payload_json, payload) AS payload_json
+                    FROM app.webhook_events
+                    WHERE (external_ref = ANY(%s::text[]) OR provider_ref = ANY(%s::text[]))
+                      AND (%s = '' OR upper(provider) = %s)
+                    ORDER BY received_at DESC
+                    LIMIT %s
+                    """,
+                    (
+                        list(external_refs) or [""],
+                        list(provider_refs) or [""],
+                        prov or "",
+                        prov or "",
+                        limit,
+                    ),
+                )
+                webhook_events = cur.fetchall() or []
+
+    return {
+        "payouts": payouts,
+        "webhook_events": webhook_events,
+        "count": len(payouts) + len(webhook_events),
+        "limit": limit,
+    }
